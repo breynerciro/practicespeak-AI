@@ -1,0 +1,32 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    # Para GPU NVIDIA descomenta:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      NOVA_OLLAMA_BASE_URL: http://ollama:11434
+      NOVA_OLLAMA_MODEL: qwen3:4b
+      NOVA_WHISPER_MODEL: small
+    volumes:
+      - nova-data:/app/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+volumes:
+  ollama-models:
+  nova-data:

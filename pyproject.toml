@@ -1,0 +1,29 @@
+[project]
+name = "nova-tutor"
+version = "1.0.0"
+description = "Local voice & text language tutor powered by Ollama + Whisper"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+addopts = "-q --cov=backend --cov-report=term-missing --cov-fail-under=95"
+
+[tool.coverage.run]
+omit = ["backend/tests/*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [".venv", "certs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# E501 lo maneja line-length; B008 es el patrón estándar de Depends/File/Form en FastAPI
+ignore = ["E501", "B008"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+exclude = ["backend/tests"]
