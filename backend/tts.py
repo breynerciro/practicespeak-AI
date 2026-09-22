@@ -11,16 +11,31 @@ import edge_tts
 from . import config
 from .log import log_info
 
-# Dos voces neuronales por idioma (edge-tts). La femenina es la voz por defecto.
+# Parejas de voces neuronales por idioma (edge-tts). La femenina es la voz por
+# defecto; estas son las que usa el selector cuando el usuario elige "Auto
+# (según género)" y también el conjunto mínimo que siempre está disponible.
 VOICES = {
     "en": {"female": "en-US-AriaNeural", "male": "en-US-GuyNeural"},
     "pt": {"female": "pt-BR-FranciscaNeural", "male": "pt-BR-AntonioNeural"},
     "fr": {"female": "fr-FR-DeniseNeural", "male": "fr-FR-HenriNeural"},
     "de": {"female": "de-DE-KatjaNeural", "male": "de-DE-ConradNeural"},
     "it": {"female": "it-IT-ElsaNeural", "male": "it-IT-DiegoNeural"},
+    "es": {"female": "es-ES-ElviraNeural", "male": "es-ES-AlvaroNeural"},
+    "ru": {"female": "ru-RU-SvetlanaNeural", "male": "ru-RU-DmitryNeural"},
+    "zh": {"female": "zh-CN-XiaoxiaoNeural", "male": "zh-CN-YunxiNeural"},
 }
 
-# Voces piper distribuidas (repo rhasspy/piper-voices, tag v1.0.0). Solo hay
+# Variantes adicionales de edge-tts que el selector ofrece además de la pareja.
+EDGE_EXTRA = {
+    "en": ["en-GB-SoniaNeural", "en-AU-NatashaNeural", "en-US-JennyNeural"],
+    "pt": ["pt-PT-RaquelNeural", "pt-PT-DuarteNeural"],
+    "fr": ["fr-FR-JulieNeural", "fr-CA-SylvieNeural"],
+    "de": ["de-AT-IngridNeural", "de-CH-RogerNeural"],
+    "es": ["es-MX-DaliaNeural", "es-MX-JorgeNeural", "es-AR-ElenaNeural"],
+    "zh": ["zh-CN-XiaoyiNeural", "zh-CN-YunjianNeural"],
+}
+
+# Parejas de voces piper (repo rhasspy/piper-voices, tag v1.0.0). Solo hay
 # variantes por género donde existen; el resto cae a la única disponible.
 PIPER_VOICES = {
     "en": {"female": "en_US-amy-medium", "male": "en_US-lessac-medium"},
@@ -28,22 +43,90 @@ PIPER_VOICES = {
     "fr": {"female": "fr_FR-siwis-medium", "male": "fr_FR-siwis-medium"},
     "de": {"female": "de_DE-thorsten-high", "male": "de_DE-thorsten-medium"},
     "it": {"female": "it_IT-paola-medium", "male": "it_IT-paola-medium"},
+    "es": {"female": "es_ES-sharvard-medium", "male": "es_ES-davefx-medium"},
+    "ru": {"female": "ru_RU-irina-medium", "male": "ru_RU-dmitri-medium"},
+    "zh": {"female": "zh_CN-huayan-medium", "male": "zh_CN-huayan-medium"},
+}
+
+# Variantes piper adicionales (verificadas en el repo v1.0.0).
+PIPER_EXTRA = {
+    "en": ["en_GB-alan-medium", "en_US-libritts-high", "en_US-ryan-high"],
+    "es": ["es_ES-carlfm-x_low", "es_ES-mls_9972-low"],
+    "ru": ["ru_RU-ruslan-medium"],
+    "zh": ["zh_CN-huayan-x_low"],
 }
 
 PIPER_VOICES_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 
+# Índice de todas las voces piper conocidas (para reconocer un id en /api/tts).
+_PIPER_IDS = frozenset(
+    vid
+    for voices in PIPER_VOICES.values()
+    for vid in voices.values()
+) | frozenset(vid for extra in PIPER_EXTRA.values() for vid in extra)
+
 
 def _resolve_voice(language: str, gender: str = "female") -> str:
-    """Voz para el idioma/género; cae a inglés si el idioma es desconocido
-    y a femenina si el género no es válido."""
+    """Voz edge por defecto para el idioma/género; cae a inglés si el idioma
+    es desconocido y a femenina si el género no es válido."""
     voices = VOICES.get(language, VOICES["en"])
     return voices.get(gender) or voices["female"]
 
 
 def _piper_voice(language: str, gender: str = "female") -> str:
-    """Voz piper para el idioma/género (cae a inglés y a femenina)."""
+    """Voz piper por defecto para el idioma/género (cae a inglés y a femenina)."""
     voices = PIPER_VOICES.get(language, PIPER_VOICES["en"])
     return voices.get(gender) or voices["female"]
+
+
+def _voice_name(voice_id: str, source: str) -> str:
+    """Nombre legible de una voz para mostrarlo en el selector.
+
+    piper: `es_ES-davefx-medium`  -> "Davefx · es (medium, local)"
+    edge:  `es-ES-ElviraNeural`   -> "Elvira · es-ES (nube)"
+    """
+    if source == "edge":
+        parts = voice_id.split("-")
+        speaker = parts[-1].removesuffix("Neural") or voice_id
+        lang = parts[0] if parts else ""
+        region = parts[1] if len(parts) > 1 else ""
+        return f"{speaker} · {lang}-{region} (nube)"
+    prefix, _, _rest = voice_id.partition("-")
+    lang = prefix.split("_")[0]
+    family, quality = _rest.rsplit("-", 1)
+    return f"{family.capitalize()} · {lang} ({quality}, local)"
+
+
+def list_voices(language: str) -> list[dict]:
+    """Voces disponibles para un idioma: las locales (piper) primero y luego
+    las de nube (edge). Cada voz lleva `id`, `name` y `source`."""
+    voices: list[dict] = []
+    seen: set[str] = set()
+    piper_ids: list[str] = []
+    for vid in PIPER_VOICES.get(language, PIPER_VOICES["en"]).values():
+        if vid not in seen:
+            piper_ids.append(vid)
+            seen.add(vid)
+    for vid in PIPER_EXTRA.get(language, []):
+        if vid not in seen:
+            piper_ids.append(vid)
+            seen.add(vid)
+    for vid in piper_ids:
+        onnx, _json = _piper_model_paths(vid)
+        voices.append(
+            {
+                "id": vid,
+                "name": _voice_name(vid, "local"),
+                "source": "local",
+                "installed": os.path.isfile(onnx),
+            }
+        )
+    edge_ids = list(VOICES.get(language, VOICES["en"]).values()) + EDGE_EXTRA.get(language, [])
+    for vid in edge_ids:
+        if vid in seen:
+            continue
+        voices.append({"id": vid, "name": _voice_name(vid, "edge"), "source": "edge"})
+    return voices
 
 
 def _piper_rel_paths(voice_id: str) -> str:
@@ -126,7 +209,24 @@ async def _sintetizar_edge(texto: str, voice: str) -> bytes:
     return b"".join(chunks)
 
 
-async def sintetizar(texto: str, language: str, gender: str = "female") -> bytes:
+async def sintetizar(texto: str, language: str, gender: str = "female", voice: str = "") -> bytes:
+    """Convierte texto en audio.
+
+    Si `voice` viene dado, lo usa tal cual: un id de piper (`*_*-*`) se
+    sintetiza en local (descargando el modelo a la primera) y cualquier otro
+    id se envía a edge-tts. Sin `voice` se usa la pareja por defecto del
+    idioma/género.
+    """
+    voice = voice.strip()
+    if voice:
+        piper_bin = _piper_binary()
+        if piper_bin and voice in _PIPER_IDS:
+            try:
+                return await asyncio.to_thread(_synthesize_piper, piper_bin, texto, voice)
+            except Exception as exc:
+                log_info(f"PIPER_FALLBACK edge motivo={exc}")
+        return await _sintetizar_edge(texto, voice)
+
     voice = _resolve_voice(language, gender)
     if piper_bin := _piper_binary():
         try:

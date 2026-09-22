@@ -64,6 +64,9 @@ WHISPER_BEAM = int(os.environ.get("NOVA_WHISPER_BEAM", str(_PROFILE["whisper_bea
 TTS_BACKEND = (os.environ.get("NOVA_TTS_BACKEND") or "edge").strip().lower()
 if TTS_BACKEND not in ("edge", "piper"):
     TTS_BACKEND = "edge"
+# Idiomas que se pueden practicar (espejo de schemas.Language). El selector de
+# voces usa esta lista para agruparlas por idioma.
+SUPPORTED_LANGUAGES = ("en", "pt", "fr", "de", "it", "es", "ru", "zh")
 # Carpeta donde se descargan bajo demanda los modelos de piper (rhasspy/piper-voices).
 PIPER_HOME = os.environ.get("NOVA_PIPER_HOME", os.path.expanduser("~/.local/share/nova/piper"))
 

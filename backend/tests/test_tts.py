@@ -47,6 +47,12 @@ class TestResolveVoice:
             ("de", "male", "de-DE-ConradNeural"),
             ("it", "female", "it-IT-ElsaNeural"),
             ("it", "male", "it-IT-DiegoNeural"),
+            ("es", "female", "es-ES-ElviraNeural"),
+            ("es", "male", "es-ES-AlvaroNeural"),
+            ("ru", "female", "ru-RU-SvetlanaNeural"),
+            ("ru", "male", "ru-RU-DmitryNeural"),
+            ("zh", "female", "zh-CN-XiaoxiaoNeural"),
+            ("zh", "male", "zh-CN-YunxiNeural"),
         ],
     )
     def test_all_language_gender_combinations(self, language, gender, expected_voice):
@@ -90,6 +96,48 @@ class TestSintetizar:
         monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
         assert run(sintetizar("hola", "en")) == b"aabb"
 
+    def test_edge_voice_override_used_as_is(self, monkeypatch):
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
+        run(sintetizar("hola", "en", "female", "es-ES-ElviraNeural"))
+        assert FakeCommunicate.last_args == ("hola", "es-ES-ElviraNeural")
+
+    def test_piper_voice_override_uses_specified_id(self, monkeypatch):
+        monkeypatch.setattr(tts.config, "TTS_BACKEND", "piper")
+        monkeypatch.setattr(tts.shutil, "which", lambda _: "/usr/bin/piper")
+        captured = {}
+
+        def fake_synth(piper_bin, texto, voice_id):
+            captured.update(piper_bin=piper_bin, texto=texto, voice_id=voice_id)
+            return b"RIFFwav"
+
+        monkeypatch.setattr(tts, "_synthesize_piper", fake_synth)
+        data = run(sintetizar("hola", "en", "female", "es_ES-davefx-medium"))
+        assert data == b"RIFFwav"
+        assert captured == {
+            "piper_bin": "/usr/bin/piper",
+            "texto": "hola",
+            "voice_id": "es_ES-davefx-medium",
+        }
+
+    def test_piper_voice_override_falls_back_to_edge_on_error(self, monkeypatch):
+        monkeypatch.setattr(tts.config, "TTS_BACKEND", "piper")
+        monkeypatch.setattr(tts.shutil, "which", lambda _: "/usr/bin/piper")
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("no hay voz")
+
+        monkeypatch.setattr(tts, "_synthesize_piper", boom)
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
+        assert run(sintetizar("hola", "en", "female", "es_ES-davefx-medium")) == b"aabb"
+        assert FakeCommunicate.last_args == ("hola", "es_ES-davefx-medium")
+
+    def test_unknown_voice_override_goes_to_edge(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tts.config, "TTS_BACKEND", "piper")
+        monkeypatch.setattr(tts.shutil, "which", lambda _: "/usr/bin/piper")
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
+        run(sintetizar("hola", "en", "female", "some-other-id"))
+        assert FakeCommunicate.last_args == ("hola", "some-other-id")
+
 
 class TestPiperVoice:
     @pytest.mark.parametrize(
@@ -103,6 +151,12 @@ class TestPiperVoice:
             ("pt", "male", "pt_BR-faber-medium"),
             ("en", "female", "en_US-amy-medium"),
             ("en", "male", "en_US-lessac-medium"),
+            ("es", "female", "es_ES-sharvard-medium"),
+            ("es", "male", "es_ES-davefx-medium"),
+            ("ru", "female", "ru_RU-irina-medium"),
+            ("ru", "male", "ru_RU-dmitri-medium"),
+            ("zh", "female", "zh_CN-huayan-medium"),
+            ("zh", "male", "zh_CN-huayan-medium"),
             ("xx", "female", "en_US-amy-medium"),
         ],
     )
@@ -122,6 +176,9 @@ class TestPiperRelPaths:
             ("de_DE-thorsten-high", "de/de_DE/thorsten/high/de_DE-thorsten-high.onnx"),
             ("en_US-lessac-medium", "en/en_US/lessac/medium/en_US-lessac-medium.onnx"),
             ("pt_BR-faber-medium", "pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx"),
+            ("es_ES-davefx-medium", "es/es_ES/davefx/medium/es_ES-davefx-medium.onnx"),
+            ("ru_RU-irina-medium", "ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx"),
+            ("zh_CN-huayan-x_low", "zh/zh_CN/huayan/x_low/zh_CN-huayan-x_low.onnx"),
         ],
     )
     def test_paths_match_repo_layout(self, voice, expected):
@@ -231,3 +288,45 @@ class TestPiperBackend:
         downloads.clear()
         assert _ensure_piper_model("it_IT-paola-medium") == onnx
         assert downloads == []
+
+
+class TestListVoices:
+    def test_es_lists_local_and_edge_without_duplicates(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tts.config, "PIPER_HOME", str(tmp_path))
+        voices = tts.list_voices("es")
+        ids = [v["id"] for v in voices]
+        assert len(ids) == len(set(ids))
+        local = [v for v in voices if v["source"] == "local"]
+        edge = [v for v in voices if v["source"] == "edge"]
+        assert "es_ES-sharvard-medium" in ids
+        assert "es_ES-davefx-medium" in ids
+        assert "es_ES-carlfm-x_low" in ids
+        assert "es-ES-ElviraNeural" in ids
+        assert "es-ES-AlvaroNeural" in ids
+        assert any(v["name"] == "Davefx · es (medium, local)" for v in local)
+        assert any(v["name"] == "Elvira · es-ES (nube)" for v in edge)
+        assert all(v["installed"] is False for v in local)
+
+    def test_unknown_language_falls_back_to_english_voices(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tts.config, "PIPER_HOME", str(tmp_path))
+        assert tts.list_voices("xx")[0]["id"] == "en_US-amy-medium"
+
+    def test_piper_extras_are_included(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tts.config, "PIPER_HOME", str(tmp_path))
+        ids = [v["id"] for v in tts.list_voices("en")]
+        assert "en_GB-alan-medium" in ids
+        assert "en_US-libritts-high" in ids
+        assert "en-US-JennyNeural" in ids  # extra de edge también
+
+    @pytest.mark.parametrize(
+        "voice_id,source,expected",
+        [
+            ("es_ES-davefx-medium", "local", "Davefx · es (medium, local)"),
+            ("en_US-amy-medium", "local", "Amy · en (medium, local)"),
+            ("zh_CN-huayan-x_low", "local", "Huayan · zh (x_low, local)"),
+            ("es-ES-ElviraNeural", "edge", "Elvira · es-ES (nube)"),
+            ("en-GB-SoniaNeural", "edge", "Sonia · en-GB (nube)"),
+        ],
+    )
+    def test_voice_name_formatting(self, voice_id, source, expected):
+        assert tts._voice_name(voice_id, source) == expected

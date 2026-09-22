@@ -100,6 +100,9 @@ LANG_NAMES = {
     "fr": "French",
     "de": "German",
     "it": "Italian",
+    "es": "Spanish",
+    "ru": "Russian",
+    "zh": "Mandarin Chinese",
 }
 
 _QUESTION_RE = re.compile(r"[^.!?]*\?")
@@ -136,6 +139,9 @@ def _lang_name_es(language: str) -> str:
         "fr": "francés",
         "de": "alemán",
         "it": "italiano",
+        "es": "español",
+        "ru": "ruso",
+        "zh": "chino mandarín",
     }.get(language, "inglés")
 
 

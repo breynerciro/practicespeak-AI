@@ -335,11 +335,22 @@ async def session_finish(payload: dict):
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/tts/voices")
+async def tts_voices(lang: str = ""):
+    """Voces disponibles para elegir en los ajustes: las locales (piper) y las
+    de nube (edge) por idioma. No depende de Ollama ni de internet."""
+    from .tts import list_voices
+
+    if lang:
+        return JSONResponse({"lang": lang, "voices": list_voices(lang)})
+    return JSONResponse({"voices": {code: list_voices(code) for code in config.SUPPORTED_LANGUAGES}})
+
+
 @app.get("/api/tts")
-async def tts(text: str, lang: str = "en", gender: str = "female"):
-    log_info(f"TTS lang={lang} gender={gender} texto={text!r}")
+async def tts(text: str, lang: str = "en", gender: str = "female", voice: str = ""):
+    log_info(f"TTS lang={lang} gender={gender} voice={voice or '-'} texto={text!r}")
     try:
-        data = await sintetizar(text, lang, gender)
+        data = await sintetizar(text, lang, gender, voice)
         # piper genera WAV; edge-tts genera MP3. El navegador lo detecta solo,
         # pero se anuncia el tipo correcto por si acaso.
         media = "audio/wav" if data.startswith(b"RIFF") else "audio/mpeg"

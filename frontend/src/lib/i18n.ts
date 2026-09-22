@@ -6,6 +6,9 @@ export const LANG_NAMES: Record<Language, string> = {
   fr: 'French',
   de: 'German',
   it: 'Italian',
+  es: 'Spanish',
+  ru: 'Russian',
+  zh: 'Chinese (Mandarin)',
 }
 
 export const LANG_NAMES_ES: Record<Language, string> = {
@@ -14,6 +17,9 @@ export const LANG_NAMES_ES: Record<Language, string> = {
   fr: 'Francés',
   de: 'Alemán',
   it: 'Italiano',
+  es: 'Español',
+  ru: 'Ruso',
+  zh: 'Chino (mandarín)',
 }
 
 export const PLACEHOLDERS: Record<Language, string> = {
@@ -22,6 +28,9 @@ export const PLACEHOLDERS: Record<Language, string> = {
   fr: 'Écris en français…',
   de: 'Schreib auf Deutsch…',
   it: 'Scrivi in italiano…',
+  es: 'Escribe en español…',
+  ru: 'Пиши по-русски…',
+  zh: '请用中文写…',
 }
 
 export const VOICE_PREVIEW: Record<Language, string> = {
@@ -30,4 +39,7 @@ export const VOICE_PREVIEW: Record<Language, string> = {
   fr: 'Bonjour ! Je suis Nova. On pratique le français ?',
   de: 'Hallo! Ich bin Nova. Lass uns Deutsch üben!',
   it: 'Ciao! Sono Nova. Pratichiamo l\'italiano?',
+  es: '¡Hola! Soy Nova. ¡Vamos a practicar español!',
+  ru: 'Привет! Я Нова. Давай практиковать русский!',
+  zh: '你好！我是Nova。我们来练中文吧！',
 }

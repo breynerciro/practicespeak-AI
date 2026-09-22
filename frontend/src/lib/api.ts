@@ -7,6 +7,7 @@ import type {
   PronunciationScore,
   Stats,
   StreamEvent,
+  TtsVoice,
 } from './types'
 
 async function jsonOrThrow(resp: Response): Promise<any> {
@@ -116,12 +117,27 @@ export async function transcribeAudio(blob: Blob, language: string): Promise<str
   return (data as PronunciationScore).transcript || ''
 }
 
-export async function getTtsBuffer(text: string, language: string, gender: string): Promise<ArrayBuffer | null> {
-  const resp = await fetch(
-    `/api/tts?lang=${encodeURIComponent(language)}&gender=${encodeURIComponent(gender)}&text=${encodeURIComponent(text)}`,
-  )
+export async function getTtsBuffer(
+  text: string,
+  language: string,
+  gender: string,
+  voice?: string,
+): Promise<ArrayBuffer | null> {
+  const params = new URLSearchParams({
+    lang: language,
+    gender: gender,
+    text: text,
+  })
+  if (voice) params.set('voice', voice)
+  const resp = await fetch(`/api/tts?${params.toString()}`)
   if (!resp.ok) return null
   return resp.arrayBuffer()
+}
+
+export function listTtsVoices(lang: string): Promise<TtsVoice[]> {
+  return fetch(`/api/tts/voices?lang=${encodeURIComponent(lang)}`)
+    .then(jsonOrThrow)
+    .then((d) => d.voices as TtsVoice[])
 }
 
 export function fetchStats(profileId?: number | null): Promise<Stats> {

@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { getTtsBuffer } from '../api'
+  import { getTtsBuffer, listTtsVoices } from '../api'
   import { playBuffer, stopPlayback } from '../audio/playback'
-  import { LANG_NAMES, VOICE_PREVIEW } from '../i18n'
+  import { LANG_NAMES, LANG_NAMES_ES, VOICE_PREVIEW } from '../i18n'
   import { settings } from '../settings.svelte'
   import { readTheme, watchSystemTheme, applyTheme, setTheme, type ThemeMode } from '../theme'
   import { toast } from '../toast.svelte'
-  import type { Language } from '../types'
+  import type { Language, TtsVoice } from '../types'
   import Icon from './Icon.svelte'
 
   let { onclose }: { onclose: () => void } = $props()
 
-  const LANGS: Language[] = ['en', 'pt', 'fr', 'de', 'it']
+  const LANGS: Language[] = ['en', 'pt', 'fr', 'de', 'it', 'es', 'ru', 'zh']
   const THEMES: { mode: ThemeMode; label: string }[] = [
     { mode: 'auto', label: 'Auto' },
     { mode: 'light', label: 'Día' },
@@ -19,6 +19,7 @@
 
   let previewing = $state(false)
   let themeMode = $state(readTheme())
+  let voices: TtsVoice[] = $state([])
 
   $effect(() => {
     themeMode = applyTheme()
@@ -41,6 +42,17 @@
     }
   })
 
+  $effect(() => {
+    const lang = settings.lang
+    listTtsVoices(lang)
+      .then((list) => {
+        voices = list
+      })
+      .catch(() => {
+        voices = []
+      })
+  })
+
   function pickTheme(mode: ThemeMode) {
     themeMode = mode
     setTheme(mode)
@@ -53,7 +65,12 @@
       return
     }
     stopPlayback()
-    const data = await getTtsBuffer(VOICE_PREVIEW[settings.lang], settings.lang, gender).catch(() => null)
+    const data = await getTtsBuffer(
+      VOICE_PREVIEW[settings.lang],
+      settings.lang,
+      gender,
+      settings.ttsVoice[settings.lang],
+    ).catch(() => null)
     if (!data) {
       toast('Voz no disponible ahora (sin conexión).')
       return
@@ -143,6 +160,19 @@
           <Icon name="square" size="sm" />
         </button>
       {/if}
+    </div>
+    <div class="voice-pick">
+      <label for="ttsVoice">Voz concreta de {LANG_NAMES_ES[settings.lang]}</label>
+      <select
+        id="ttsVoice"
+        value={settings.ttsVoice[settings.lang] ?? ''}
+        onchange={(e) => settings.setTtsVoice(settings.lang, (e.currentTarget as HTMLSelectElement).value)}
+      >
+        <option value="">Auto ({settings.gender === 'male' ? 'Hombre' : 'Mujer'})</option>
+        {#each voices as v (v.id)}
+          <option value={v.id}>{v.name}</option>
+        {/each}
+      </select>
     </div>
   </div>
 

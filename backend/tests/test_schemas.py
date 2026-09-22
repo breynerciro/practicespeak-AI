@@ -19,11 +19,11 @@ class TestChatRequest:
         assert req.language == "pt"
         assert [t.role for t in req.history] == ["user", "assistant"]
 
-    @pytest.mark.parametrize("lang", ["en", "pt", "fr", "de", "it"])
+    @pytest.mark.parametrize("lang", ["en", "pt", "fr", "de", "it", "es", "ru", "zh"])
     def test_all_supported_languages_accepted(self, lang):
         assert ChatRequest(language=lang, message="hi").language == lang
 
-    @pytest.mark.parametrize("bad_language", ["xx", "es", "EN", ""])
+    @pytest.mark.parametrize("bad_language", ["xx", "EN", "", "ja"])
     def test_invalid_language_rejected(self, bad_language):
         with pytest.raises(ValidationError):
             ChatRequest(language=bad_language, message="hi")

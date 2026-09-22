@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 pytest.importorskip("faster_whisper", reason="whisper no instalado en este entorno")
@@ -188,7 +190,7 @@ def fake_transcribe(monkeypatch):
 @pytest.fixture()
 def fake_sintetizar(monkeypatch):
     """Reemplaza sintetizar para no salir a edge_tts."""
-    async def fake(text, language, gender="female"):
+    async def fake(text, language, gender="female", voice=""):
         return b"FAKEMP3"
 
     monkeypatch.setattr("backend.main.sintetizar", fake)
@@ -231,19 +233,31 @@ class TestTTS:
     def test_gender_parameter_passed_through(self, client, monkeypatch):
         seen = {}
 
-        async def fake(text, language, gender="female"):
-            seen.update(text=text, language=language, gender=gender)
+        async def fake(text, language, gender="female", voice=""):
+            seen.update(text=text, language=language, gender=gender, voice=voice)
             return b"FAKEMP3"
 
         monkeypatch.setattr("backend.main.sintetizar", fake)
         resp = client.get("/api/tts", params={"text": "hola", "lang": "de", "gender": "male"})
         assert resp.status_code == 200
-        assert seen == {"text": "hola", "language": "de", "gender": "male"}
+        assert seen == {"text": "hola", "language": "de", "gender": "male", "voice": ""}
+
+    def test_voice_parameter_passed_through(self, client, monkeypatch):
+        seen = {}
+
+        async def fake(text, language, gender="female", voice=""):
+            seen.update(voice=voice)
+            return b"FAKEMP3"
+
+        monkeypatch.setattr("backend.main.sintetizar", fake)
+        resp = client.get("/api/tts", params={"text": "hola", "lang": "es", "voice": "es_ES-davefx-medium"})
+        assert resp.status_code == 200
+        assert seen["voice"] == "es_ES-davefx-medium"
 
     def test_gender_defaults_to_female(self, client, monkeypatch):
         seen = {}
 
-        async def fake(text, language, gender="female"):
+        async def fake(text, language, gender="female", voice=""):
             seen.update(gender=gender)
             return b"FAKEMP3"
 
@@ -253,13 +267,50 @@ class TestTTS:
         assert seen["gender"] == "female"
 
     def test_sintetizar_error_returns_502(self, client, monkeypatch):
-        async def fail(text, language, gender="female"):
+        async def fail(text, language, gender="female", voice=""):
             raise RuntimeError("no internet")
 
         monkeypatch.setattr("backend.main.sintetizar", fail)
         resp = client.get("/api/tts", params={"text": "hello", "lang": "en"})
         assert resp.status_code == 502
         assert "TTS failed" in resp.json()["detail"]
+
+
+class TestTtsVoices:
+    def test_language_returns_local_and_edge_voices(self, client, tmp_path, monkeypatch):
+        monkeypatch.setattr("backend.tts.config.PIPER_HOME", str(tmp_path))
+        resp = client.get("/api/tts/voices", params={"lang": "es"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["lang"] == "es"
+        sources = {v["source"] for v in body["voices"]}
+        assert sources == {"local", "edge"}
+        local_ids = [v["id"] for v in body["voices"] if v["source"] == "local"]
+        edge_ids = [v["id"] for v in body["voices"] if v["source"] == "edge"]
+        assert "es_ES-sharvard-medium" in local_ids
+        assert "es_ES-davefx-medium" in local_ids
+        assert "es-ES-ElviraNeural" in edge_ids
+        assert all(v["installed"] is False for v in body["voices"] if v["source"] == "local")
+        assert all(v["name"] for v in body["voices"])
+
+    def test_marks_piper_voice_installed_when_model_on_disk(self, client, tmp_path, monkeypatch):
+        from backend.tts import _piper_model_paths
+
+        monkeypatch.setattr("backend.tts.config.PIPER_HOME", str(tmp_path))
+        onnx, _json = _piper_model_paths("es_ES-davefx-medium")
+        os.makedirs(os.path.dirname(onnx), exist_ok=True)
+        open(onnx, "wb").close()
+        resp = client.get("/api/tts/voices", params={"lang": "es"})
+        local = {v["id"]: v["installed"] for v in resp.json()["voices"] if v["source"] == "local"}
+        assert local["es_ES-davefx-medium"] is True
+        assert local["es_ES-sharvard-medium"] is False
+
+    def test_all_languages_grouped(self, client, tmp_path, monkeypatch):
+        from backend import config
+
+        monkeypatch.setattr(config, "PIPER_HOME", str(tmp_path))
+        resp = client.get("/api/tts/voices")
+        assert set(resp.json()["voices"].keys()) == set(config.SUPPORTED_LANGUAGES)
 
 
 class TestIndex:

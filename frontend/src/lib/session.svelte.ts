@@ -363,7 +363,7 @@ class SessionStore {
       stopPlayback()
       let ok = false
       try {
-        const data = await getTtsBuffer(chunk, settings.lang, settings.gender)
+        const data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang])
         if (data) {
           const h = await playBuffer(data, () => {})
           ok = h !== null

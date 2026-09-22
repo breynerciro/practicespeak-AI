@@ -1,6 +1,6 @@
 // Tipos compartidos con el backend (espejo de backend/schemas.py + respuestas)
 
-export type Language = 'en' | 'pt' | 'fr' | 'de' | 'it'
+export type Language = 'en' | 'pt' | 'fr' | 'de' | 'it' | 'es' | 'ru' | 'zh'
 
 export type Mode = 'voice' | 'text'
 
@@ -60,6 +60,13 @@ export interface Health {
 export interface Voice {
   lang: Language
   gender: 'female' | 'male'
+}
+
+export interface TtsVoice {
+  id: string
+  name: string
+  source: 'local' | 'edge'
+  installed: boolean
 }
 
 // Eventos del streaming SSE (/api/immersive/stream)

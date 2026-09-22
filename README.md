@@ -7,7 +7,7 @@ in real time (with explanations in spanish), and never sends your data anywhere.
 ![python](https://img.shields.io/badge/python-3.10%2b-3776ab?logo=python&logocolor=white)
 ![fastapi](https://img.shields.io/badge/fastapi-009688?logo=fastapi&logocolor=white)
 ![svelte](https://img.shields.io/badge/svelte-5-ff4c26?logo=svelte&logocolor=white)
-![tests](https://img.shields.io/badge/tests-234%20passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-272%20passed-brightgreen)
 ![coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
 ![lighthouse](https://img.shields.io/badge/lighthouse-a11y%20100%20%c2%b7%20perf%20100-24b47e?logo=lighthouse&logocolor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -17,6 +17,7 @@ in real time (with explanations in spanish), and never sends your data anywhere.
 | | |
 |---|---|
 | 🎙️ **Inmersivo por voz** | Habla natural; el VAD detecta cuando terminas y envía solo. Whisper (local) transcribe, piper (local) responde sin gastar internet. |
+| 🗣️ **Elige la voz de Nova** | En ajustes: una voz local o de nube concreta por idioma (con muestra audible), o "Auto" según tu género favorito. |
 | ⌨️ **Modo texto** | Practica escrita sin micrófono. Correcciones persistentes como tarjetas. |
 | ⚡ **Respuestas en streaming** | Nova escribe mientras piensa y **habla frase a frase** en cuanto se completa, sin esperar a terminar. |
 | 📝 **Correcciones en vivo** | Cada fallo se convierte en tarjeta: qué dijiste → cómo es → la regla, explicada en español. |
@@ -55,7 +56,12 @@ flowchart LR
 - **Frontend**: SPA en **Svelte 5** (runes) + Vite, iconos SVG propios, WCAG 2.2 AA
   (skip link, foco visible, focus trap en diálogos, live regions, reduced-motion, 4.5:1+ contraste).
 - **TTS**: por defecto **piper** (local, solo CPU, descarga la voz a la primera) con caída a
-  edge-tts si no hay voz instalada ni internet (`NOVA_TTS_BACKEND=piper`).
+  edge-tts si no hay voz instalada ni internet (`NOVA_TTS_BACKEND=piper`). El selector de
+  ajustes lista las voces locales instaladas y disponibles más un catálogo de edge por idioma
+  (`GET /api/tts/voices`); la elegida viaja en `/api/tts?voice=...`.
+- **Idiomas**: inglés, portugués, francés, alemán, italiano, **español, ruso y chino (mandarín)** —
+  todos con voces piper (descarga bajo demanda) y edge. El LLM adapta prompts, correcciones y
+  la transcripción Whisper por idioma.
 
 ## Quickstart (one command)
 
@@ -150,7 +156,7 @@ backend/
   tts.py       # piper (local) + edge-tts fallback synthesis
   db.py        # SQLite persistence (sessions, corrections, stats)
   config.py    # Environment-based settings
-  tests/       # 205 tests, no network required
+  tests/       # 239 tests, no network required
 frontend/      # SPA Svelte 5 + Vite (npm run build → dist/ served by FastAPI)
   src/         # components, stores and styles (app.css)
   public/      # PWA: manifest, icons, service worker (sw.js)

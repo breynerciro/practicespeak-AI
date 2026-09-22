@@ -10,8 +10,9 @@ def _require_non_empty(value: str) -> str:
     return value
 
 
-# Idiomas de práctica soportados (voces edge-tts + Whisper disponibles)
-Language = Literal["en", "pt", "fr", "de", "it"]
+# Idiomas de práctica soportados (voces edge-tts + Whisper disponibles).
+# Mantener en síncrono con config.SUPPORTED_LANGUAGES.
+Language = Literal["en", "pt", "fr", "de", "it", "es", "ru", "zh"]
 
 
 class Turn(BaseModel):
