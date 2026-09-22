@@ -6,8 +6,9 @@ in real time (with explanations in spanish), and never sends your data anywhere.
 
 ![python](https://img.shields.io/badge/python-3.10%2b-3776ab?logo=python&logocolor=white)
 ![fastapi](https://img.shields.io/badge/fastapi-009688?logo=fastapi&logocolor=white)
-![tests](https://img.shields.io/badge/tests-98%20passed-brightgreen)
-![coverage](https://img.shields.io/badge/coverage-98.6%25-brightgreen)
+![svelte](https://img.shields.io/badge/svelte-5-ff4c26?logo=svelte&logocolor=white)
+![tests](https://img.shields.io/badge/tests-234%20passed-brightgreen)
+![coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)
 ![lighthouse](https://img.shields.io/badge/lighthouse-a11y%20100%20%c2%b7%20perf%20100-24b47e?logo=lighthouse&logocolor=white)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -15,40 +16,46 @@ in real time (with explanations in spanish), and never sends your data anywhere.
 
 | | |
 |---|---|
-| 🎙️ **Immersive voice mode** | Talk naturally; a VAD detects when you finish and auto-sends. Whisper (local) transcribes, edge-tts answers. |
-| ⌨️ **Text mode** | Practice writing without a microphone. Corrections appear as persistent cards. |
-| 📝 **Real-time corrections** | Every mistake becomes a card: what you said → what's right → the rule, explained in Spanish. |
-| 🎯 **20 topics, always fresh** | Random topic picker that avoids repeating your recent sessions. |
-| 🌓 **Dual theme** | Automatic light/dark (with manual override), glassmorphism UI, Lucide-style SVG icons. |
-| 🔒 **Fully local** | LLM (Ollama) and speech-to-text (faster-whisper) run on your hardware. |
+| 🎙️ **Inmersivo por voz** | Habla natural; el VAD detecta cuando terminas y envía solo. Whisper (local) transcribe, piper (local) responde sin gastar internet. |
+| ⌨️ **Modo texto** | Practica escrita sin micrófono. Correcciones persistentes como tarjetas. |
+| ⚡ **Respuestas en streaming** | Nova escribe mientras piensa y **habla frase a frase** en cuanto se completa, sin esperar a terminar. |
+| 📝 **Correcciones en vivo** | Cada fallo se convierte en tarjeta: qué dijiste → cómo es → la regla, explicada en español. |
+| ✍️ **Corrector de textos** | Pega o escribe una frase suelta y Nova la corrige y explica, sin iniciar conversación. |
+| 🎯 **20 temas, siempre frescos** | Selector aleatorio que evita repetir tus últimas sesiones. |
+| 🌓 **Tema dual** | Claro/oscuro automático (con override), glassmorphism, iconos SVG estilo Lucide. |
+| 📲 **PWA instalable** | Añádela al menú del teléfono; el service worker da shell offline tras la primera visita. |
+| 🔒 **100% local** | LLM (Ollama), speech-to-text (faster-whisper) y castellano TTS (piper) corren en tu máquina. |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Phone["📱 Phone / Browser (PWA)"]
-        UI["Static UI\nvanilla JS + SVG icons"]
+    subgraph Phone["📱 Teléfono / Navegador (PWA)"]
+        UI["SPA Svelte 5\nstreaming + service worker"]
     end
-    subgraph Server["🖥️ Your machine — FastAPI"]
-        API["backend/main.py\nREST API"]
-        AI["backend/ai.py\nprompt builder + JSON repair"]
+    subgraph Server["🖥️ Tu máquina — FastAPI"]
+        API["backend/main.py\nREST + SSE"]
+        AI["backend/ai.py\nprompts + reparación JSON + streaming"]
         SP["backend/speech.py\nfaster-whisper (int8, CPU)"]
-        DB["backend/db.py\nSQLite: sessions & corrections"]
+        DB["backend/db.py\nSQLite: sesiones y correcciones"]
     end
     O["🦙 Ollama\nqwen3:4b"]
-    T["edge-tts\n(Microsoft, needs internet)"]
+    T["backend/tts.py\npiper local + fallback edge-tts"]
 
-    UI <-->|HTTPS + getUserMedia| API
+    UI <-->|HTTPS + getUserMedia + SSE| API
     API --> AI --> O
     API --> SP
     API --> DB
     API --> T
 ```
 
-- **Backend**: FastAPI, Pydantic-validated payloads, typed errors (`503` model down,
-  `502` malformed model output), Whisper runs in a threadpool so the event loop never blocks.
-- **Frontend**: dependency-free vanilla JS, inline SVG icon system, WCAG 2.2 AA
-  (keyboard-operable orb, live regions, reduced-motion support, 4.5:1+ contrast).
+- **Backend**: FastAPI, payloads validados con Pydantic, errores tipados (`503` modelo caído,
+  `502` salida malformada), respuestas de Nova por **SSE en streaming** y Whisper en un
+  threadpool para no bloquear el event loop.
+- **Frontend**: SPA en **Svelte 5** (runes) + Vite, iconos SVG propios, WCAG 2.2 AA
+  (skip link, foco visible, focus trap en diálogos, live regions, reduced-motion, 4.5:1+ contraste).
+- **TTS**: por defecto **piper** (local, solo CPU, descarga la voz a la primera) con caída a
+  edge-tts si no hay voz instalada ni internet (`NOVA_TTS_BACKEND=piper`).
 
 ## Quickstart (one command)
 
@@ -102,6 +109,8 @@ Copy `.env.example` to `.env` (or export the vars). Highlights:
 |---|---|---|
 | `NOVA_OLLAMA_MODEL` | `qwen3:4b` | Any Ollama chat model |
 | `NOVA_WHISPER_MODEL` | `small` | tiny/base/small/medium/large-v3 |
+| `NOVA_TTS_BACKEND` | `edge` | `piper` = voz local (solo CPU) o `edge` (necesita red) |
+| `NOVA_PIPER_HOME` | `~/.local/share/nova/piper` | Where piper caches voice models |
 | `NOVA_PUBLIC_HOSTNAME` | *(empty)* | Public HTTPS host used for the HTTP→HTTPS redirect |
 
 ## Development
@@ -111,6 +120,16 @@ make test    # pytest with coverage gate (fail-under 95)
 make lint    # ruff + mypy
 make dev     # uvicorn --reload
 ```
+
+## Trucos
+
+- **Corregir un texto suelto**: bajo la conversación está el botón *Corregir texto* — escribe (o pega)
+  una frase y Nova la corrige y explica, sin iniciar una sesión.
+- **Cortar mientras Nova habla**: el TTS va **por frases** en streaming: si tocas el orbe durante su
+  respuesta la interrumpes y empiezas a hablar tú (aunque a veces querrás esperar a que termine).
+- **Instalar como app (PWA)**: en el navegador del teléfono, menú → *Añadir a pantalla de inicio*.
+  Tras la primera visita el service worker permite abrir Nova sin conexión (voz y LLM seguirán
+  necesitando el servidor).
 
 ## HTTPS for the microphone
 
@@ -124,17 +143,18 @@ make dev     # uvicorn --reload
 
 ```
 backend/
-  main.py      # FastAPI app, endpoints, error handling
+  main.py      # FastAPI app, endpoints, SSE streaming, error handling
   ai.py        # Ollama client, prompts, JSON repair, topic picker
   schemas.py   # Pydantic request models
   speech.py    # Whisper transcription + pronunciation scoring
-  tts.py       # edge-tts synthesis
+  tts.py       # piper (local) + edge-tts fallback synthesis
   db.py        # SQLite persistence (sessions, corrections, stats)
   config.py    # Environment-based settings
-  tests/       # 98 tests, no network required
-frontend/      # SPA Svelte 5 + Vite (npm run build → dist/ servido por FastAPI)
-  src/         # componentes, stores y estilos (app.css)
-  dist/        # build de producción (generado, no se sube)
+  tests/       # 205 tests, no network required
+frontend/      # SPA Svelte 5 + Vite (npm run build → dist/ served by FastAPI)
+  src/         # components, stores and styles (app.css)
+  public/      # PWA: manifest, icons, service worker (sw.js)
+  dist/        # production build (generated, not committed)
 run.sh         # start/stop/status with QR code
 ```
 
