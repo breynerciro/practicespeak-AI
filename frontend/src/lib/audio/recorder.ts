@@ -159,6 +159,10 @@ export class MicRecorder {
     this.lastVoiceAt = null
     this.sawVoice = false
     const buf = new Uint8Array(this.analyser.fftSize)
+    // Tope absoluto de grabación: un único timer (antes se programaba dentro
+    // del loop de cada frame y se acumulaban cientos que cortaban a los 20 s).
+    clearTimeout(this.maxTimer)
+    this.maxTimer = setTimeout(() => this.stop(), this.config.maxMs)
     const loop = () => {
       if (!this.vadOn) return
       this.raf = requestAnimationFrame(loop)
@@ -167,6 +171,11 @@ export class MicRecorder {
       this.events.onLevel?.(level)
       const now = performance.now()
       if (level > this.config.threshold) {
+        if (!this.sawVoice) {
+          // Primera voz detectada: re-basa el umbral con el nivel real del
+          // hablante (micrófono lejano o voz suave ya no vuelan al silencio).
+          this.config.threshold = Math.min(0.012, level * 0.45)
+        }
         this.sawVoice = true
         this.lastVoiceAt = now
         this.warnPause = false
@@ -179,7 +188,7 @@ export class MicRecorder {
         this.bargeFrames = 0
         if (this.sawVoice && this.lastVoiceAt !== null) {
           const quiet = now - this.lastVoiceAt
-          if (quiet > 1200 && !this.warnPause) {
+          if (quiet > this.config.silenceMs * 0.55 && !this.warnPause) {
             this.warnPause = true
             this.events.onPauseWarn?.()
           }
@@ -189,7 +198,6 @@ export class MicRecorder {
           }
         }
       }
-      this.maxTimer = setTimeout(() => this.stop(), this.config.maxMs)
     }
     this.raf = requestAnimationFrame(loop)
   }

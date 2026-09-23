@@ -89,7 +89,7 @@ describe('session (modo texto)', () => {
     mocks.ensureMic.mockResolvedValue(undefined)
     mocks.beginRec.mockResolvedValue(new Blob(['audio data'.repeat(100)]))
     mocks.releaseRec.mockResolvedValue(undefined)
-    mocks.playBuffer.mockResolvedValue({ id: 1, stop: vi.fn(), get current() { return false } })
+    mocks.playBuffer.mockResolvedValue({ id: 1, stop: vi.fn(), get current() { return true }, waited: Promise.resolve() })
     settings.setMode('text')
     session.stop(false)
   })
@@ -188,7 +188,7 @@ function voiceBefore() {
   mocks.beginRec.mockResolvedValue(new Blob(['audio data'.repeat(100)]))
   mocks.releaseRec.mockResolvedValue(undefined)
   mocks.getTtsBuffer.mockResolvedValue(new ArrayBuffer(8))
-  mocks.playBuffer.mockResolvedValue({ id: 1, stop: vi.fn(), get current() { return false } })
+  mocks.playBuffer.mockResolvedValue({ id: 1, stop: vi.fn(), get current() { return true }, waited: Promise.resolve() })
   mocks.transcribeAudio.mockResolvedValue('hola')
   settings.setMode('voice')
   settings.setLang('en')
@@ -220,6 +220,34 @@ describe('session (modo voz: TTS por frases)', () => {
     const spoken = mocks.getTtsBuffer.mock.calls.map((c) => c[0] as string)
     expect(spoken).toContain('Nice try.')
     expect(spoken).toContain('Let us practice more!')
+    await session.stop(true)
+  })
+
+  it('habla todas las frases en orden: no sintetiza la siguiente hasta que la anterior terminó de sonar', async () => {
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 11 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'delta', text: 'É bom ter uma ideia de onde ir. ' }
+      yield { type: 'done', reply: 'É bom ter uma ideia de onde ir. Você já pensou em lugares com atrações diferentes?', corrections: [] }
+    })
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((r) => (releaseFirst = r))
+    let playCalls = 0
+    mocks.playBuffer.mockImplementation(async () => {
+      playCalls++
+      return { id: playCalls, stop: vi.fn(), get current() { return true }, waited: playCalls === 1 ? firstGate : Promise.resolve() }
+    })
+    await session.start()
+    await flush()
+    // La 1ª frase ya se sintetizó; la 2ª debe esperar a que el audio termine
+    // (antes el bucle no esperaba y solo se oía la última frase).
+    expect(mocks.getTtsBuffer.mock.calls.length).toBe(1)
+    releaseFirst()
+    await flush()
+    expect(mocks.getTtsBuffer.mock.calls.length).toBe(2)
+    const spoken = mocks.getTtsBuffer.mock.calls.map((c) => c[0] as string)
+    expect(spoken[0]).toBe('É bom ter uma ideia de onde ir.')
+    expect(spoken[1]).toBe('Você já pensou em lugares com atrações diferentes?')
     await session.stop(true)
   })
 

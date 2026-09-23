@@ -6,6 +6,7 @@
   import { settings } from './lib/settings.svelte'
   import { toast } from './lib/toast.svelte'
   import AccessGate from './lib/components/AccessGate.svelte'
+  import ChatLog from './lib/components/ChatLog.svelte'
   import Composer from './lib/components/Composer.svelte'
   import CorrectionPanel from './lib/components/CorrectionPanel.svelte'
   import GrammarPanel from './lib/components/GrammarPanel.svelte'
@@ -67,10 +68,15 @@
     </p>
   {/if}
 
-  <div class="nova-stage">
-    <Orb />
-    <p class="status" role="status" aria-live="polite">{session.status}</p>
-  </div>
+  {#if session.running && settings.mode === 'text'}
+    <ChatLog />
+    {#if session.status}<p class="chat-status">{session.status}</p>{/if}
+  {:else}
+    <div class="nova-stage">
+      <Orb />
+      <p class="status" role="status" aria-live="polite">{session.status}</p>
+    </div>
+  {/if}
 
   {#if !session.running}
     <StartCard
@@ -84,14 +90,16 @@
     <Composer />
 
     <div class="ghost-row">
-      <button
-        class="ghost-link"
-        onclick={() => session.setTranscriptOpen(!session.transcriptOpen)}
-        aria-expanded={session.transcriptOpen}
-      >
-        <Icon name="list" size="sm" />
-        Historial
-      </button>
+      {#if settings.mode === 'voice'}
+        <button
+          class="ghost-link"
+          onclick={() => session.setTranscriptOpen(!session.transcriptOpen)}
+          aria-expanded={session.transcriptOpen}
+        >
+          <Icon name="list" size="sm" />
+          Historial
+        </button>
+      {/if}
       {#if correctionsCount > 0}
         <button
           class="ghost-link"

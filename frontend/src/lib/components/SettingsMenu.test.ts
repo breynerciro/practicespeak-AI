@@ -71,7 +71,7 @@ describe('SettingsMenu · selector de voz', () => {
     const select = screen.getByLabelText('Voz concreta de Inglés') as HTMLSelectElement
     await waitFor(() => expect(select.options.length).toBe(3))
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: 'Spanish' }))
+    await user.click(screen.getByRole('button', { name: 'Español' }))
     const esSelect = await screen.findByLabelText('Voz concreta de Español') as HTMLSelectElement
     await waitFor(() => expect(esSelect.options.length).toBe(4)) // Auto + 3 voces de es
     const calls = fetchMock.mock.calls.map((c) => String(c[0]))

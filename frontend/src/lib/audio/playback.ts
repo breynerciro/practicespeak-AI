@@ -3,7 +3,7 @@
 // actual (vista previa o respuesta de PracticeSpeak).
 
 let ctx: AudioContext | null = null
-let current: { id: number; src: AudioBufferSourceNode } | null = null
+let current: { id: number; src: AudioBufferSourceNode; done: () => void } | null = null
 let nextId = 0
 
 function ensureCtx(): AudioContext | null {
@@ -16,16 +16,20 @@ function ensureCtx(): AudioContext | null {
   return ctx
 }
 
-/** Descarta cualquier reproducción en curso. */
+/** Descarta cualquier reproducción en curso (resuelve también su `waited`). */
 export function stopPlayback() {
   if (current) {
+    const c = current
+    current = null
     try {
-      current.src.onended = null
-      current.src.stop()
+      c.src.onended = null
+      c.src.stop()
     } catch {
       // ya parado
     }
-    current = null
+    // Completa el ciclo del handle: sin esto, quien espera `waited` se queda
+    // colgado cuando el corte viene de fuera (interrupción, nueva respuesta).
+    c.done()
   }
 }
 
@@ -33,11 +37,15 @@ export interface PlaybackHandle {
   id: number
   stop: () => void
   get current(): boolean
+  /** Resuelve cuando el audio termina de sonar (o al cortarlo). */
+  waited: Promise<void>
 }
 
 /**
  * Reproduce un buffer de audio; `onEnded` se llama al terminar o al cortarlo.
- * Devuelve null si no hay AudioContext (o falla la decodificación).
+ * Devuelve el control en cuanto el audio EMPIEZA (no al terminar); para
+ * esperar el final usa `handle.waited`. Devuelve null si no hay AudioContext
+ * (o falla la decodificación).
  */
 export async function playBuffer(
   data: ArrayBuffer,
@@ -52,14 +60,17 @@ export async function playBuffer(
     src.connect(audio.destination)
     const id = ++nextId
     let settled = false
+    let resolveWaited!: () => void
+    const waited = new Promise<void>((r) => (resolveWaited = r))
     const done = () => {
       if (settled) return
       settled = true
       if (current && current.id === id) current = null
       onEnded?.()
+      resolveWaited()
     }
     src.onended = done
-    current = { id, src }
+    current = { id, src, done }
     src.start()
     return {
       id,
@@ -70,6 +81,7 @@ export async function playBuffer(
         if (current?.id === id) stopPlayback()
         done()
       },
+      waited,
     }
   } catch {
     onEnded?.()

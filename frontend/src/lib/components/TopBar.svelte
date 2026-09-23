@@ -16,17 +16,14 @@
   <div class="brand">
     <span class="logo"><Icon name="graduation-cap" /></span>
     <span class="brand-name">PracticeSpeak AI</span>
-    {#if profileStore.current}
-      <span class="who">{profileStore.current.name}</span>
-    {/if}
   </div>
 
   <div style="position:relative; display:flex; gap:10px; align-items:center;">
     <button
       class="person-chip"
       id="personChip"
-      aria-label="Cambiar de persona"
-      title="Cambiar de persona"
+      aria-label={profileStore.current ? `Cambiar de persona (${profileStore.current.name})` : 'Cambiar de persona'}
+      title={profileStore.current ? `Cambiar de persona (${profileStore.current.name})` : 'Cambiar de persona'}
       onclick={() => profileStore.switchPerson()}
     >
       <span class="menu-avatar">{initials(profileStore.current?.name)}</span>

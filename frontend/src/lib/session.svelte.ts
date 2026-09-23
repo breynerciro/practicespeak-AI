@@ -49,6 +49,8 @@ class SessionStore {
   private streamFinished = false
   private speechFailed = false
   private drainJob: Promise<void> | null = null
+  /** Despierta al drenaje cuando la cola vacía recibe frases nuevas. */
+  private queueWake: (() => void) | null = null
   /** Escucha de interrupción activa mientras PracticeSpeak habla. */
   private bargeOn = false
   /** El estudiante ya habló por encima de PracticeSpeak (interrumpió). */
@@ -362,6 +364,7 @@ class SessionStore {
   private enqueueSpeech(gen: number, chunks: string[]) {
     if (gen !== this.speechGen) return
     this.speechQueue.push(...chunks)
+    this.queueWake?.()
     this.kickDrain()
   }
 
@@ -373,21 +376,35 @@ class SessionStore {
   }
 
   private async drain() {
-    while (this.running && this.speechQueue.length) {
+    // La reproducción anterior se corta una sola vez al entrar (p. ej. al
+    // interrumpir); dentro del bucle NUNCA se corta: playBuffer resuelve
+    // cuando el audio EMPIEZA, no cuando termina.
+    stopPlayback()
+    while (this.running) {
+      // Cola vacía con stream aún abierto: ESPERAR a que lleguen frases
+      // (antes el bucle salía y el tramo final nunca se sintetizaba).
+      while (this.running && !this.speechQueue.length && !this.streamFinished) {
+        await new Promise<void>((wake) => (this.queueWake = wake)).finally(() => (this.queueWake = null))
+      }
+      if (!this.running || (this.speechFailed && !this.speechQueue.length)) break
+      if (!this.speechQueue.length) break
       if (!this.bargeOn && !this.bargeInFired) this.startBarge()
       const gen = this.speechGen
       const chunk = this.speechQueue.shift()!
       this.orb = 'speaking'
       this.speaking = true
       this.status = ''
-      stopPlayback()
       let ok = false
       try {
         const data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang], settings.speed)
         if (gen !== this.speechGen) break
         if (data) {
+          // Esperar a que la frase TERMINE de sonar: sin esto el bucle seguía
+          // al siguiente chunk y el stopPlayback() de la entrada mataba la
+          // frase anterior (solo se oía la última de la cola).
           const h = await playBuffer(data, () => {})
-          ok = h !== null
+          ok = h !== null && h.current
+          if (ok && h) await h.waited
         }
       } catch {
         ok = false
@@ -454,6 +471,9 @@ class SessionStore {
     this.orb = 'listening'
     this.status = 'Vale, te escucho…'
     sendLog('BARGE_IN')
+    // Despertar al drenaje aparcado: ve la cola vacía y vuelve a esperar
+    // sobre un despertador nuevo (el turno del estudiante lo reactivará).
+    this.queueWake?.()
   }
 
   /** Cancela la escucha de fondo ya no necesaria (solo si no hubo interrupción). */
@@ -473,6 +493,9 @@ class SessionStore {
     this.bargeInFired = false
     this.bargeProcessing = false
     this.speechGen = 0
+    // Si el drenaje está aparcado esperando frases, despertarlo para que
+    // vea el reset y termine limpio (sin esto bloquearía el habla futura).
+    this.queueWake?.()
   }
 
   private startListeningWithDelay() {

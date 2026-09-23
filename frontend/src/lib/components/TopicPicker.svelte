@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { NOVA_TOPICS, topicLabel } from '../topics'
+  import { NOVA_TOPICS } from '../topics'
   import { session } from '../session.svelte'
   import { toast } from '../toast.svelte'
   import Icon from './Icon.svelte'
@@ -36,7 +36,3 @@
     {/each}
   </div>
 </details>
-
-{#if session.requestedTopic}
-  <p class="requested-topic">Tema elegido: {topicLabel(session.requestedTopic)}</p>
-{/if}

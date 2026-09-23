@@ -7,12 +7,12 @@ describe('vad', () => {
     const normal = vadFor('normal')
     const alta = vadFor('alta')
     expect(baja.threshold).toBeCloseTo(0.045)
-    expect(baja.silenceMs).toBe(2800)
+    expect(baja.silenceMs).toBe(4200)
     expect(alta.threshold).toBeCloseTo(0.015)
-    expect(alta.silenceMs).toBe(1800)
+    expect(alta.silenceMs).toBe(2800)
     expect(normal).toEqual(DEFAULT_VAD)
     expect(normal).not.toBe(DEFAULT_VAD)
-    expect(DEFAULT_VAD.silenceMs).toBe(2200)
+    expect(DEFAULT_VAD.silenceMs).toBe(3500)
   })
 
   it('por defecto usa sensibilidad normal (copia fresca)', () => {

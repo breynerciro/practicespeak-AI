@@ -13,8 +13,10 @@ export interface VADConfig {
 
 export const DEFAULT_VAD: VADConfig = {
   threshold: 0.03,
-  silenceMs: 2200,
-  maxMs: 20000,
+  // 3.5 s de silencio: una pausa para pensar en el idioma que practicas ya no
+  // te corta (antes eran 2.2 s y el estudiante perdía la mitad de la frase).
+  silenceMs: 3500,
+  maxMs: 45000,
   minBlobBytes: 1500,
 }
 
@@ -27,9 +29,9 @@ export type VADSensitivity = 'baja' | 'normal' | 'alta'
 export function vadFor(sensitivity: VADSensitivity = 'normal'): VADConfig {
   switch (sensitivity) {
     case 'baja':
-      return { threshold: 0.045, silenceMs: 2800, maxMs: DEFAULT_VAD.maxMs, minBlobBytes: DEFAULT_VAD.minBlobBytes }
+      return { threshold: 0.045, silenceMs: 4200, maxMs: DEFAULT_VAD.maxMs, minBlobBytes: DEFAULT_VAD.minBlobBytes }
     case 'alta':
-      return { threshold: 0.015, silenceMs: 1800, maxMs: DEFAULT_VAD.maxMs, minBlobBytes: DEFAULT_VAD.minBlobBytes }
+      return { threshold: 0.015, silenceMs: 2800, maxMs: DEFAULT_VAD.maxMs, minBlobBytes: DEFAULT_VAD.minBlobBytes }
     default:
       return { ...DEFAULT_VAD }
   }

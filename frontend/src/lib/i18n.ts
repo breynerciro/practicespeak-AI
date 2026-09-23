@@ -1,14 +1,16 @@
 import type { Language } from './types'
 
+// Nombres cortos: los píldoras del menú de ajustes son estrechos y un nombre
+// largo ("Chinese (Mandarin)") desborda y se superpone al vecino en móvil.
 export const LANG_NAMES: Record<Language, string> = {
   en: 'English',
-  pt: 'Portuguese (Brazíl)',
-  fr: 'French',
-  de: 'German',
-  it: 'Italian',
-  es: 'Spanish',
-  ru: 'Russian',
-  zh: 'Chinese (Mandarin)',
+  pt: 'Portugués',
+  fr: 'Francés',
+  de: 'Alemán',
+  it: 'Italiano',
+  es: 'Español',
+  ru: 'Ruso',
+  zh: 'Chino',
 }
 
 export const LANG_NAMES_ES: Record<Language, string> = {
