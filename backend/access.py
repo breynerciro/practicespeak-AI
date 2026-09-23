@@ -38,6 +38,15 @@ def check_access_code(request) -> bool:
     return _provided_code(request).casefold() == config.ACCESS_CODE.casefold()
 
 
+def code_ok(request) -> bool:
+    """True si no hay código configurado o el presentado es el correcto.
+
+    Helper para /api/health: la ruta es pública, pero gracias a este campo el
+    frontend puede validar el código contra health (needs_code dinámico) sin
+    necesitar un endpoint de login aparte."""
+    return not config.ACCESS_CODE or _provided_code(request).casefold() == config.ACCESS_CODE.casefold()
+
+
 # ---------------------------------------------------------------- rate limit
 
 _WINDOW = 60.0

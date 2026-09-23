@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from . import config, db
-from .access import STREAM_GATE, check_access_code, check_rate_limit
+from .access import STREAM_GATE, check_access_code, check_rate_limit, code_ok
 from .ai import (
     NovaError,
     check_ollama,
@@ -156,7 +156,7 @@ async def ca_der():
 
 
 @app.get("/api/health")
-async def health():
+async def health(request: Request):
     ollama_up = await check_ollama()
     return JSONResponse(
         {
@@ -166,7 +166,10 @@ async def health():
             "ok": ollama_up,
             "public_hostname": config.PUBLIC_HOSTNAME,
             "https_port": config.HTTPS_PORT,
-            "needs_code": bool(config.ACCESS_CODE),
+            # Estado de ESTA petición: true = el servidor pide código y el que
+            # trae la petición (si trae) no es válido. Health sigue abierto para
+            # que el frontend monte la pantalla de acceso y valide contra aquí.
+            "needs_code": bool(config.ACCESS_CODE) and not code_ok(request),
         }
     )
 

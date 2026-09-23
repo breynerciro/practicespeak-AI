@@ -66,6 +66,20 @@ describe('AccessStore', () => {
     expect(store.errorMsg).toMatch(/no es válido/)
   })
 
+  it('rechaza con mensaje cuando health responde needs_code (código incorrecto)', async () => {
+    vi.mocked(getHealth).mockResolvedValue(health(true))
+    const store = new AccessStore()
+    await settled(store)
+
+    // health siempre responde 200: el rechazo llega como needs_code: true.
+    vi.mocked(getHealth).mockResolvedValue(health(true))
+    const ok = await store.submit('código-incorrecto')
+    expect(ok).toBe(false)
+    expect(store.errorMsg).toMatch(/no es válido/)
+    expect(store.gateOpen).toBe(true)
+    expect(localStorage.getItem('nova-access')).toBeNull()
+  })
+
   it('valida el código que viene en la URL (?code=) y lo limpia de la barra', async () => {
     history.replaceState(null, '', '/?code=URLCODE')
     vi.mocked(getHealth).mockResolvedValueOnce(health(true)).mockResolvedValueOnce(health(false))

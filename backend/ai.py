@@ -112,7 +112,7 @@ _QUESTION_RE = re.compile(r"[^.!?]*\?")
 
 
 def _previous_questions(history: list[dict]) -> list[str]:
-    """Preguntas que Nova ya hizo en esta conversación (normalizadas y sin duplicados).
+    """Preguntas que el tutor ya hizo en esta conversación (normalizadas y sin duplicados).
 
     Se extraen de los turnos del asistente del historial para poder decirle al
     modelo explícitamente qué NO volver a preguntar.
@@ -274,7 +274,7 @@ def _json_field_progressive(buffer: str, field: str) -> tuple[str | None, bool]:
     Devuelve (None, False) si la clave aún no apareció; (texto, False) si
     el valor está a medias (la comilla de cierre aún no llegó o un escape
     está truncado); (texto, True) si el valor está completo. Sirve para
-    emitir deltas progresivos del texto de Nova sin esperar al JSON entero.
+    emitir deltas progresivos del texto del tutor sin esperar al JSON entero.
     """
     match = _field_value_re(field).search(buffer)
     if not match:

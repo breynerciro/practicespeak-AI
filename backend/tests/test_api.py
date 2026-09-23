@@ -74,6 +74,21 @@ class TestHealth:
         body = client.get("/api/health").json()
         assert body["needs_code"] is True
 
+    def test_needs_code_false_with_valid_code(self, client, monkeypatch):
+        """Health reporta el estado de la petición: código válido => false."""
+        from backend import config
+
+        monkeypatch.setattr(config, "ACCESS_CODE", "Secreto")
+        body = client.get("/api/health", headers={"X-Nova-Code": " secreto "}).json()
+        assert body["needs_code"] is False
+
+    def test_needs_code_true_with_wrong_code(self, client, monkeypatch):
+        from backend import config
+
+        monkeypatch.setattr(config, "ACCESS_CODE", "Secreto")
+        body = client.get("/api/health", headers={"X-Nova-Code": "malo"}).json()
+        assert body["needs_code"] is True
+
     def test_ok_true_when_ollama_up(self, client, monkeypatch):
         async def up():
             return True

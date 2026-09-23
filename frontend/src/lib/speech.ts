@@ -1,4 +1,4 @@
-// División de frases completas para reproducir a Nova mientras escribe
+// División de frases completas para reproducir al tutor mientras escribe
 // (TTS por oraciones en modo voz).
 
 const SENTENCE = /[.!?]+(?=\s|$)/g

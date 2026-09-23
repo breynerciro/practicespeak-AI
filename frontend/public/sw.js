@@ -2,7 +2,7 @@
 // precarga la portada y cachea bajo demanda los assets del build (hasheados).
 // Ruta servida en /sw.js para que el alcance cubra toda la app.
 
-const CACHE = 'psai-v2'
+const CACHE = 'psai-v4'
 
 const PRECACHE = [
   '/',
@@ -10,6 +10,8 @@ const PRECACHE = [
   '/static/favicon.svg',
   '/static/icon-192.png',
   '/static/icon-512.png',
+  '/static/icon-maskable-192.png',
+  '/static/icon-maskable-512.png',
   '/static/fonts/fraunces-latin.woff2',
   '/static/fonts/outfit-latin.woff2',
 ]

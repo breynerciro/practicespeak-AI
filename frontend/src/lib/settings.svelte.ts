@@ -45,7 +45,7 @@ class SettingsStore {
   gender: Gender = $state(genderFromStorage())
   /** Voz concreta elegida por idioma (id de piper o de edge); vacío = Auto. */
   ttsVoice: Partial<Record<Language, string>> = $state(voicesFromStorage())
-  /** Velocidad de habla de Nova (0.75×–1.5×). */
+  /** Velocidad de habla del tutor (0.75×–1.5×). */
   speed: number = $state(speedFromStorage())
   /** Sensibilidad del micrófono (umbral del VAD). */
   micSensitivity: VADSensitivity = $state(sensitivityFromStorage())

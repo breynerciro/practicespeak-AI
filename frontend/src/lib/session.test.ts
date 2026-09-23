@@ -163,7 +163,7 @@ describe('session (modo texto)', () => {
     expect(session.history).toHaveLength(0)
   })
 
-  it('ante un evento error de Nova deja de correr sin añadir turnos', async () => {
+  it('ante un evento error del tutor deja de correr sin añadir turnos', async () => {
     mocks.immersiveStream.mockImplementation(async function* () {
       yield { type: 'session_id', session_id: 5 }
       yield { type: 'error', detail: 'Modelo local no disponible.' }
@@ -246,7 +246,7 @@ describe('session (modo voz: TTS por frases)', () => {
     await session.stop(true)
   })
 
-  it('hablar por encima de Nova la interrumpe y pasa a escucharte', async () => {
+  it('hablar por encima del tutor la interrumpe y pasa a escucharte', async () => {
     mocks.immersiveStream.mockImplementation(async function* () {
       yield { type: 'session_id', session_id: 9 }
       yield { type: 'topic', topic: 'travel' }
@@ -272,7 +272,7 @@ describe('session (modo voz: TTS por frases)', () => {
     await session.stop(true)
   })
 
-  it('tocar el orbe mientras Nova habla la interrumpe', async () => {
+  it('tocar el orbe mientras el tutor habla la interrumpe', async () => {
     mocks.immersiveStream.mockImplementation(async function* () {
       yield { type: 'session_id', session_id: 10 }
       yield { type: 'topic', topic: 'travel' }

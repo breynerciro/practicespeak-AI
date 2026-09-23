@@ -47,7 +47,8 @@ export class AccessStore {
         const candidate = urlCode || this.code
         if (candidate) {
           const ok = await this.verify(candidate)
-          if (!ok && !urlCode) this.gateOpen = true
+          // Código inválido (vino de la URL o recordado): mostrar la puerta.
+          if (!ok) this.gateOpen = true
         } else {
           this.gateOpen = true
         }
@@ -64,7 +65,11 @@ export class AccessStore {
   async verify(code: string): Promise<boolean> {
     try {
       const h = await getHealth(code)
-      if (h?.needs_code) return false
+      if (h?.needs_code) {
+        // Sin mensaje no había feedback visible al pulsar «Entrar».
+        this.errorMsg = 'Ese código no es válido. Pídeselo a quien te invitó.'
+        return false
+      }
       this.code = code
       setAccessCode(code)
       try {

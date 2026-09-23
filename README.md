@@ -252,9 +252,9 @@ Cómo elegir (medido con `scripts/benchmark_models.py`, que usa el payload exact
 Cambia el modelo con `NOVA_OLLAMA_MODEL` en `.env`. Para exprimir la GPU, activa en el
 servidor de Ollama `OLLAMA_FLASH_ATTENTION=1` y `OLLAMA_KV_CACHE_TYPE=q8_0`.
 
-> ¿Quieres un modelo afinado a tuMaterial propio? El flujo de *tuning* ligero con
+> ¿Quieres un modelo afinado a tu material propio? El flujo de *tuning* ligero con
 > Modelfiles está pensado como punto de partida: ajusta los `PARAMETER`, crea tu variante
-> con `ollama create` y médela con el benchmark antes de decidir.
+> con `ollama create` y mídela con el benchmark antes de decidir.
 
 ### Configuración completa
 

@@ -63,7 +63,7 @@ mkdir -p /tmp/nova
 DESKTOP="$HOME/Desktop"
 [ -d "$DESKTOP" ] || DESKTOP="$HOME/Escritorio"
 if [ -d "$DESKTOP" ]; then
-  cat > "$DESKTOP/nova-tutor.desktop" <<EOF
+  cat > "$DESKTOP/practicespeak.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=PracticeSpeak AI
@@ -72,25 +72,25 @@ Exec=$PWD/run.sh start
 Icon=audio-input-microphone
 Terminal=true
 EOF
-  chmod +x "$DESKTOP/nova-tutor.desktop"
+  chmod +x "$DESKTOP/practicespeak.desktop"
   ok "Icono 'PracticeSpeak AI' creado en tu escritorio"
 fi
 
-cat > "$PWD/nova" <<EOF
+cat > "$PWD/practicespeak" <<EOF
 #!/usr/bin/env bash
 exec "$PWD/run.sh" "\$@"
 EOF
-chmod +x "$PWD/nova"
+chmod +x "$PWD/practicespeak"
 
 cat <<EOF
 
 =========================================================
   ¡Listo! Para usar PracticeSpeak AI:
     1. Doble clic en el icono "PracticeSpeak AI" del escritorio
-       (o ejecuta:  ./nova start  en una terminal)
+       (o ejecuta:  ./practicespeak start  en una terminal)
     2. En tu celular, escanea el código QR que aparecerá
     3. Elige un tema y empieza a hablar o escribir
 
-  Otros comandos:  ./nova status   ./nova stop
+  Otros comandos:  ./practicespeak status   ./practicespeak stop
 =========================================================
 EOF

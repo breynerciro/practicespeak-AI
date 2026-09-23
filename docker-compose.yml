@@ -22,7 +22,7 @@ services:
       NOVA_OLLAMA_MODEL: qwen3:4b
       NOVA_WHISPER_MODEL: small
       # --- Compartir por URL (opcional) ---
-      # Código que les pedirás a tus amigos (déjalo vacío para no pedir nada)
+      # Código que les pedirás a tus amigos (PracticeSpeak AI) (déjalo vacío para no pedir nada)
       NOVA_ACCESS_CODE: ${NOVA_ACCESS_CODE:-}
       # Máximo de conversaciones simultáneas (protege la CPU)
       NOVA_MAX_CONCURRENT_STREAMS: "2"
