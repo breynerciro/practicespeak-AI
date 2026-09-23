@@ -37,6 +37,22 @@ jobs:
       - name: Mypy
         run: mypy backend
 
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Historia completa: un secreto filtrado en un commit antiguo también
+          # debe saltar el escaneo (git clone --depth 1 solo trae el último).
+          fetch-depth: 0
+      - name: Secret scanning (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # Opcional: solo necesario para ver hallazgos en el dashboard de
+          # Secret Scanning de GitHub; el escaneo y el fallo del job funcionan
+          # sin token (los logs se publican en el job).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   frontend:
     runs-on: ubuntu-latest
     steps:
