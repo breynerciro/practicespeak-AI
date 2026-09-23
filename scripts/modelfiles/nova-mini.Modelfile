@@ -1,0 +1,11 @@
+# Nova sobre qwen3:1.7b — el más rápido, 100% GPU holgado
+# Crear con:  ollama create nova-mini -f scripts/modelfiles/nova-mini.Modelfile
+FROM qwen3:1.7b
+
+# Parámetros de generación de Nova (iguales a backend/ai.py)
+PARAMETER temperature 0.8
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.15
+PARAMETER num_predict 220
+# Contexto ajustado a la sesión inmersiva (system + 12 turnos)
+PARAMETER num_ctx 2048

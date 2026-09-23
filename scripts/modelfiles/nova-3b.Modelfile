@@ -1,0 +1,12 @@
+# Nova sobre llama3.2:3b — cabe entero en GPUs de 4 GB (2.0 GB q4_K_M)
+# Crear con:  ollama create nova-3b -f scripts/modelfiles/nova-3b.Modelfile
+FROM llama3.2:3b
+
+# Parámetros de generación de Nova (iguales a backend/ai.py)
+PARAMETER temperature 0.8
+PARAMETER top_p 0.9
+PARAMETER repeat_penalty 1.15
+PARAMETER num_predict 220
+# Contexto ajustado a la sesión inmersiva (system + 12 turnos) para reducir
+# la caché KV y acelerar el prefill; el backend nunca envía más.
+PARAMETER num_ctx 2048

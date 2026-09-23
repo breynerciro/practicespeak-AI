@@ -360,3 +360,40 @@ class TestCheckOllama:
         client = FakeAsyncClient(error=httpx.ConnectError("refused"))
         monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *a, **k: client)
         assert run(check_ollama()) is False
+
+
+class TestResolveModel:
+    """Fallback automático cuando el modelo configurado no existe en Ollama."""
+
+    def test_configured_model_present(self, monkeypatch):
+        client = FakeAsyncClient(
+            response=FakeResponse({"models": [{"name": "nova-mini:latest"}, {"name": "qwen3:1.7b"}]})
+        )
+        monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *a, **k: client)
+        monkeypatch.setattr(ai, "MODEL", "nova-mini")
+        assert run(ai.resolve_model()) == "nova-mini"
+
+    def test_tag_with_version_counts_as_present(self, monkeypatch):
+        client = FakeAsyncClient(response=FakeResponse({"models": [{"name": "qwen3:1.7b"}]}))
+        monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *a, **k: client)
+        monkeypatch.setattr(ai, "MODEL", "qwen3:1.7b")
+        assert run(ai.resolve_model()) == "qwen3:1.7b"
+
+    def test_falls_back_when_model_missing(self, monkeypatch):
+        client = FakeAsyncClient(response=FakeResponse({"models": [{"name": "qwen3:1.7b"}]}))
+        monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *a, **k: client)
+        monkeypatch.setattr(ai, "MODEL", "nova-mini")
+        monkeypatch.setattr(ai, "FALLBACK_MODEL", "qwen3:1.7b")
+        assert run(ai.resolve_model()) == "qwen3:1.7b"
+
+    def test_tags_down_returns_configured(self, monkeypatch):
+        client = FakeAsyncClient(error=httpx.ConnectError("refused"))
+        monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *a, **k: client)
+        monkeypatch.setattr(ai, "MODEL", "nova-mini")
+        assert run(ai.resolve_model()) == "nova-mini"
+
+    def test_empty_tags_returns_configured(self, monkeypatch):
+        client = FakeAsyncClient(response=FakeResponse({"models": []}))
+        monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *a, **k: client)
+        monkeypatch.setattr(ai, "MODEL", "nova-mini")
+        assert run(ai.resolve_model()) == "nova-mini"

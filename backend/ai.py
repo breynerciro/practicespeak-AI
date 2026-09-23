@@ -11,6 +11,9 @@ OLLAMA_URL = config.OLLAMA_BASE_URL + "/api/chat"
 OLLAMA_TAGS_URL = config.OLLAMA_BASE_URL + "/api/tags"
 MODEL = config.OLLAMA_MODEL
 OLLAMA_TIMEOUT = config.OLLAMA_TIMEOUT
+# Modelo al que caer si el configurado no existe en Ollama (p. ej. un modelo
+# personalizado creado con `ollama create` que falta en una instalación nueva).
+FALLBACK_MODEL = config.os.environ.get("NOVA_OLLAMA_FALLBACK_MODEL", "qwen3:1.7b")
 
 
 class NovaError(RuntimeError):
@@ -40,7 +43,7 @@ MODE_SPECIFIC = {
 IMMERSIVE_SYSTEM = """You are NOVA, a warm and encouraging voice language tutor for __LANG__. The student's mother tongue is Spanish. You practice with them ONLY by voice. Your name is Nova. In your FIRST message of a session you must greet the student by saying something like "Hi! I'm Nova, your language tutor" (in __LANG__).
 
 Rules:
-- Always speak in __LANG__, at an A2-B1 level: short, clear, natural sentences.
+- Always speak in __LANG__, at an B1-C1 level: short, clear, natural sentences.
 - ALWAYS end your reply with ONE follow-up question so the conversation keeps going.
 - NEVER repeat a question you already asked in this conversation, and never rephrase one you already asked. Each follow-up must explore a NEW angle: a detail, a reason, a personal story, a comparison, or a hypothetical.
 - React FIRST to what the student just said (be warm, curious, surprised, or sympathetic) before asking anything new. Reference a specific word or idea they used.
@@ -172,7 +175,7 @@ def _ollama_options() -> dict:
 
 async def ask_ollama(messages: list[dict]) -> str:
     payload = {
-        "model": MODEL,
+        "model": await resolve_model(),
         "messages": messages,
         "stream": False,
         "format": "json",
@@ -211,7 +214,7 @@ async def ask_ollama_stream(messages: list[dict]):
     (un objeto JSON por línea) y este generador produce los fragmentos de
     `message.content` conforme se generan."""
     payload = {
-        "model": MODEL,
+        "model": await resolve_model(),
         "messages": messages,
         "stream": True,
         "format": "json",
@@ -472,3 +475,27 @@ async def check_ollama() -> bool:
             return True
     except Exception:
         return False
+
+
+async def resolve_model() -> str:
+    """Devuelve el modelo configurado si existe en Ollama; si no, el fallback.
+
+    Evita 503 en instalaciones donde falta un modelo personalizado. Muy barata:
+    una petición GET local a /api/tags (sin generar tokens)."""
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(OLLAMA_TAGS_URL)
+            resp.raise_for_status()
+            names = {m.get("name", "") for m in resp.json().get("models", [])}
+    except Exception:
+        return MODEL
+    if MODEL in names or not names:
+        return MODEL
+    for name in names:
+        base = name.split(":")[0]
+        if MODEL == base or MODEL.startswith(base + ":"):
+            return MODEL
+    fallback = FALLBACK_MODEL if FALLBACK_MODEL in names else next(iter(names), MODEL)
+    if fallback != MODEL:
+        log_info(f"MODEL_FALLBACK {MODEL} -> {fallback}")
+    return fallback
