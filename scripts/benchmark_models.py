@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark de modelos Ollama con el tuning real de Nova.
+"""Benchmark de modelos Ollama con el tuning real de PracticeSpeak AI.
 
 Simula el payload de producción (system prompt inmersivo, format json,
 think off, temperature 0.8, repeat_penalty 1.15, num_predict configurado)

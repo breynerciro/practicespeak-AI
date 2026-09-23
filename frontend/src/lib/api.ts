@@ -62,7 +62,7 @@ export async function createProfile(name: string): Promise<Profile> {
 export interface StreamPayload {
   mode: 'start' | 'continue'
   language: string
-  /** Solo en `start`: tema sugerido por el estudiante (vacío = elige Nova). */
+  /** Solo en `start`: tema sugerido por el estudiante (vacío = elige PracticeSpeak). */
   topic?: string
   /** Solo en `continue`: mensaje transcrito del estudiante. */
   message?: string

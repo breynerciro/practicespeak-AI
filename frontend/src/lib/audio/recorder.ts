@@ -6,7 +6,7 @@ import { DEFAULT_VAD, computeRms, type VADConfig } from './vad'
 export interface RecorderEvents {
   onLevel?: (level: number) => void
   onPauseWarn?: () => void
-  /** Voz sostenida detectada (≈100 ms) — usado para interrumpir a Nova. */
+  /** Voz sostenida detectada (≈100 ms) — usado para interrumpir a PracticeSpeak. */
   onBarge?: () => void
 }
 

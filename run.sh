@@ -93,7 +93,7 @@ except Exception:
 }
 
 funnel() {
-  # Abre Nova a internet con Tailscale Funnel (HTTPS público, sin abrir
+  # Abre PracticeSpeak AI a internet con Tailscale Funnel (HTTPS público, sin abrir
   # puertos del router). Requiere Tailscale instalado y sesión iniciada.
   local action="${1:-status}"
   if ! is_ts; then
@@ -103,10 +103,10 @@ funnel() {
   case "$action" in
     on|start)
       if ! is_app; then
-        echo "❌ Nova no está corriendo: arranca antes con $0 start" >&2
+        echo "❌ PracticeSpeak AI no está corriendo: arranca antes con $0 start" >&2
         return 1
       fi
-      echo "🌐 Abriendo Nova a internet con Tailscale Funnel…"
+      echo "🌐 Abriendo PracticeSpeak AI a internet con Tailscale Funnel…"
       if "$TS_BIN" --socket="$TS_SOCK" funnel --bg --https=443 "http://127.0.0.1:$PORT" 2>&1; then
         local host
         host="$(ts_dns_name)"
@@ -197,14 +197,14 @@ start() {
   fi
 
   if is_app; then
-    echo "✅ Nova ya estaba corriendo"
+    echo "✅ PracticeSpeak AI ya estaba corriendo"
   else
     nohup .venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port "$PORT" >>"$LOG_DIR"/tutor.log 2>&1 &
-    echo "🚀 Nova iniciado (http)"
+    echo "🚀 PracticeSpeak AI iniciado (http)"
   fi
 
   if curl -skf "https://127.0.0.1:$PORT_HTTPS/api/health" >/dev/null 2>&1; then
-    echo "✅ Nova HTTPS ya estaba corriendo"
+    echo "✅ PracticeSpeak AI HTTPS ya estaba corriendo"
   else
     local scrt scert skey
     scrt="certs/tailscale.crt"
@@ -216,7 +216,7 @@ start() {
     nohup .venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port "$PORT_HTTPS" \
       --ssl-certfile "$scrt" --ssl-keyfile "$skey" \
       >>"$LOG_DIR"/tutor.log 2>&1 &
-    echo "🚀 Nova iniciado (https :$PORT_HTTPS con $(basename "$scrt"))"
+    echo "🚀 PracticeSpeak AI iniciado (https :$PORT_HTTPS con $(basename "$scrt"))"
   fi
 
   ts_up
@@ -228,15 +228,15 @@ start() {
 }
 
 stop() {
-  pkill -f "uvicorn backend.main:app" && echo "🛑 Nova detenido" || echo "Nova ya estaba detenido"
+  pkill -f "uvicorn backend.main:app" && echo "🛑 PracticeSpeak AI detenido" || echo "PracticeSpeak AI ya estaba detenido"
   pkill -f "$OLLAMA_BIN serve" && echo "🛑 Ollama detenido" || echo "Ollama ya estaba detenido"
   systemctl --user stop tailscaled 2>/dev/null && echo "🛑 Tailscale detenido" || echo "Tailscale ya estaba detenido"
 }
 
 status() {
   [ "$(is_ollama && echo 1 || echo 0)" = "1" ] && echo "✅ Ollama: corriendo" || echo "❌ Ollama: detenido"
-  [ "$(is_app && echo 1 || echo 0)" = "1" ] && echo "✅ Nova: corriendo" || echo "❌ Nova: detenido"
-  curl -skf "https://127.0.0.1:$PORT_HTTPS/api/health" >/dev/null 2>&1 && echo "✅ Nova HTTPS (:8443): corriendo" || echo "❌ Nova HTTPS (:8443): detenido"
+  [ "$(is_app && echo 1 || echo 0)" = "1" ] && echo "✅ PracticeSpeak AI: corriendo" || echo "❌ PracticeSpeak AI: detenido"
+  curl -skf "https://127.0.0.1:$PORT_HTTPS/api/health" >/dev/null 2>&1 && echo "✅ PracticeSpeak AI HTTPS (:8443): corriendo" || echo "❌ PracticeSpeak AI HTTPS (:8443): detenido"
   if is_ts; then
     if "$TS_BIN" --socket="$TS_SOCK" status >/dev/null 2>&1; then
       echo "✅ Tailscale: conectado (IP: $(ts_ip))"

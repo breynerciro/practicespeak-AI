@@ -24,13 +24,13 @@
     <div class="transcript-list" bind:this={panelEl}>
       {#each session.history as h, i (i)}
         <div class="t-turn {h.role === 'user' ? 't-user' : 't-ai'}">
-          <span class="t-who">{h.role === 'user' ? 'Tú' : 'Nova'}</span>
+          <span class="t-who">{h.role === 'user' ? 'Tú' : 'PracticeSpeak'}</span>
           <span class="t-text">{h.content}</span>
         </div>
       {/each}
       {#if session.streamText !== null}
         <div class="t-turn t-ai">
-          <span class="t-who">Nova</span>
+          <span class="t-who">PracticeSpeak</span>
           <span class="t-text t-stream">{session.streamText}<span class="blink" aria-hidden="true"></span></span>
         </div>
       {/if}

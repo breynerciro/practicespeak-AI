@@ -4,9 +4,9 @@
 </script>
 
 {#if session.corrections.length > 0 && session.correctionsOpen}
-  <section class="corrections" aria-label="Correcciones de Nova">
+  <section class="corrections" aria-label="Correcciones de PracticeSpeak">
     <header class="panel-head">
-      <h2><Icon name="sparkles" size="sm" /> Correcciones de Nova</h2>
+      <h2><Icon name="sparkles" size="sm" /> Correcciones de PracticeSpeak</h2>
       <button
         class="panel-close"
         aria-label="Ocultar correcciones"

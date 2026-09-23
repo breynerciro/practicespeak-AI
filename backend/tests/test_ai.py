@@ -150,11 +150,11 @@ class TestPickTopic:
 class TestImmersiveStart:
     def test_returns_topic_reply_and_corrections(self, monkeypatch):
         async def fake_ask(messages):
-            return json.dumps({"topic": "food", "reply": "Hi! I'm Nova.", "corrections": []})
+            return json.dumps({"topic": "food", "reply": "Hi! I'm PracticeSpeak.", "corrections": []})
 
         monkeypatch.setattr(ai, "ask_ollama", fake_ask)
         result = run(immersive_start("en", "food"))
-        assert result == {"topic": "food", "reply": "Hi! I'm Nova.", "corrections": []}
+        assert result == {"topic": "food", "reply": "Hi! I'm PracticeSpeak.", "corrections": []}
 
     def test_topic_prompt_includes_requested_topic(self, monkeypatch):
         captured = {}

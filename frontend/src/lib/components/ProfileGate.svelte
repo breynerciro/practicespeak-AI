@@ -33,7 +33,7 @@
     <div class="gate-card">
       <div class="gate-logo"><Icon name="graduation-cap" /></div>
       <h1>Hola</h1>
-      <p class="gate-hint">Elige tu nombre o apodo para que Nova guarde tu progreso aparte.</p>
+      <p class="gate-hint">Elige tu nombre o apodo para que PracticeSpeak guarde tu progreso aparte.</p>
 
       <form
         class="gate-form"

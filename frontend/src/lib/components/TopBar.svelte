@@ -15,7 +15,7 @@
 <header class="topbar">
   <div class="brand">
     <span class="logo"><Icon name="graduation-cap" /></span>
-    <span class="brand-name">Nova</span>
+    <span class="brand-name">PracticeSpeak AI</span>
     {#if profileStore.current}
       <span class="who">{profileStore.current.name}</span>
     {/if}

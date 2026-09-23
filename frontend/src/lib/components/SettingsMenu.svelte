@@ -124,7 +124,7 @@
   </div>
 
   <div class="menu-group">
-    <div class="menu-label">Voz de Nova</div>
+    <div class="menu-label">Voz de PracticeSpeak</div>
     <div class="seq">
       <button
         type="button"

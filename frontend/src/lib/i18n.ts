@@ -34,12 +34,12 @@ export const PLACEHOLDERS: Record<Language, string> = {
 }
 
 export const VOICE_PREVIEW: Record<Language, string> = {
-  en: "Hello! I'm Nova. Let's practice English!",
-  pt: 'Olá! Eu sou a Nova. Vamos praticar português?',
-  fr: 'Bonjour ! Je suis Nova. On pratique le français ?',
-  de: 'Hallo! Ich bin Nova. Lass uns Deutsch üben!',
-  it: 'Ciao! Sono Nova. Pratichiamo l\'italiano?',
-  es: '¡Hola! Soy Nova. ¡Vamos a practicar español!',
-  ru: 'Привет! Я Нова. Давай практиковать русский!',
-  zh: '你好！我是Nova。我们来练中文吧！',
+  en: "Hello! I'm PracticeSpeak. Let's practice English!",
+  pt: 'Olá! Eu sou a PracticeSpeak. Vamos praticar português?',
+  fr: 'Bonjour ! Je suis PracticeSpeak. On pratique le français ?',
+  de: 'Hallo! Ich bin PracticeSpeak. Lass uns Deutsch üben!',
+  it: 'Ciao! Sono PracticeSpeak. Pratichiamo l\'italiano?',
+  es: '¡Hola! Soy PracticeSpeak. ¡Vamos a practicar español!',
+  ru: 'Привет! Я ПрактикСпик. Давай практиковать русский!',
+  zh: '你好！我是PracticeSpeak。我们来练中文吧！',
 }

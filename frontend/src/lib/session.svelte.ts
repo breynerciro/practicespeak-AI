@@ -1,6 +1,5 @@
-// Controlador de la conversación con Nova: un único objeto reactivo que
-// coordina texto, voz (VAD), TTS, histórico y correcciones. Sustituye al
-// objeto-diós `nova` del frontend antiguo.
+// Controlador de la conversación con PracticeSpeak: un único objeto reactivo que
+// coordina texto, voz (VAD), TTS, histórico y correcciones.
 import {
   finishSession,
   getTtsBuffer,
@@ -35,7 +34,7 @@ class SessionStore {
   transcriptOpen = $state(false)
   sessionId = $state<number | null>(null)
   requestedTopic = $state('')
-  /** Texto provisional mientras Nova escribe (streaming). */
+  /** Texto provisional mientras PracticeSpeak escribe (streaming). */
   streamText = $state<string | null>(null)
   /** Contador para pedir foco al input tras una respuesta en modo texto. */
   focusTick = $state(0)
@@ -50,9 +49,9 @@ class SessionStore {
   private streamFinished = false
   private speechFailed = false
   private drainJob: Promise<void> | null = null
-  /** Escucha de interrupción activa mientras Nova habla. */
+  /** Escucha de interrupción activa mientras PracticeSpeak habla. */
   private bargeOn = false
-  /** El estudiante ya habló por encima de Nova (interrumpió). */
+  /** El estudiante ya habló por encima de PracticeSpeak (interrumpió). */
   private bargeInFired = false
   /** El blob de la interrupción está siendo transcrito/procesado. */
   private bargeProcessing = false
@@ -201,7 +200,7 @@ class SessionStore {
     if (!text || !this.running || this.busy) return
     this.busy = true
     this.orb = 'thinking'
-    this.status = 'Nova está leyendo tu mensaje…'
+    this.status = 'PracticeSpeak está leyendo tu mensaje…'
     this.resetStream()
     this.addTurn('user', text)
     await this.continueTurn(text, 'text')
@@ -331,10 +330,10 @@ class SessionStore {
       const msg = e instanceof Error ? e.message : String(e)
       sendLog('CONTINUE_ERR ' + msg)
       if (origin === 'text') {
-        this.status = 'Error de conexión con Nova.'
+        this.status = 'Error de conexión con PracticeSpeak.'
         this.requestFocus()
       } else {
-        this.status = 'Error de conexión con Nova.'
+        this.status = 'Error de conexión con PracticeSpeak.'
         this.setTranscriptOpen(true)
       }
       toast(msg)
@@ -444,7 +443,7 @@ class SessionStore {
       })
   }
 
-  /** Interrupción: corta a Nova y pasa a escucharte a ti. */
+  /** Interrupción: corta a PracticeSpeak y pasa a escucharte a ti. */
   private bargeIn() {
     if (!this.running || this.bargeInFired || this.orb !== 'speaking') return
     this.bargeInFired = true

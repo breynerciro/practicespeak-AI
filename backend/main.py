@@ -29,10 +29,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend", "dist")
 
 # Página de aviso cuando el frontend aún no se ha compilado.
-_FRONTEND_FALLBACK_HTML = """<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Nova · frontend sin compilar</title><style>body{font-family:system-ui,ui-sans-serif,sans-serif;background:#171320;color:#efe9f4;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center}.c{max-width:46ch;padding:24px}.code{font-family:ui-monospace,monospace;background:#241f2c;padding:3px 10px;border-radius:8px}</style></head><body><div class="c"><h1>Nova</h1><p>El frontend no está compilado. En la carpeta <b>frontend/</b> ejecuta:</p><p class="code">npm install &amp;&amp; npm run build</p><p>y recarga esta página.</p></div></body></html>"""
+_FRONTEND_FALLBACK_HTML = """<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PracticeSpeak AI · frontend sin compilar</title><style>body{font-family:system-ui,ui-sans-serif,sans-serif;background:#171320;color:#efe9f4;display:grid;place-items:center;min-height:100vh;margin:0;text-align:center}.c{max-width:46ch;padding:24px}.code{font-family:ui-monospace,monospace;background:#241f2c;padding:3px 10px;border-radius:8px}</style></head><body><div class="c"><h1>PracticeSpeak AI</h1><p>El frontend no está compilado. En la carpeta <b>frontend/</b> ejecuta:</p><p class="code">npm install &amp;&amp; npm run build</p><p>y recarga esta página.</p></div></body></html>"""
 
 
-app = FastAPI(title="Tutor AI Local")
+app = FastAPI(title="PracticeSpeak AI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -195,7 +195,7 @@ async def chat(payload: ChatRequest, request: Request):
     except NovaError as exc:
         raise HTTPException(status_code=503, detail=f"Modelo local no disponible. {exc}") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail=f"Nova dio una respuesta inválida. {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"PracticeSpeak dio una respuesta inválida. {exc}") from exc
     return JSONResponse(result)
 
 
@@ -225,7 +225,7 @@ async def immersive(payload: ImmersiveRequest):
     except NovaError as exc:
         raise HTTPException(status_code=503, detail=f"Modelo local no disponible. {exc}") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail=f"Nova dio una respuesta inválida. {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"PracticeSpeak dio una respuesta inválida. {exc}") from exc
     if isinstance(result, dict) and "reply" in result:
         log_info(f"IMMERSIVE reply: {result['reply']!r}")
     return JSONResponse(result)
@@ -239,7 +239,7 @@ def _sse(data: dict) -> str:
 
 @app.post("/api/immersive/stream")
 async def immersive_stream(payload: ImmersiveRequest):
-    """Nova responde en streaming (SSE) con el mismo contrato que
+    """PracticeSpeak responde en streaming (SSE) con el mismo contrato que
     `/api/immersive`, pero entregando cada fragmento mientras se genera:
     `session_id` (solo start), `topic`, `delta`*, `corrections`? y `done`;
     ante un fallo de Ollama se envía un evento `error`. Un semáforo limita
@@ -247,7 +247,7 @@ async def immersive_stream(payload: ImmersiveRequest):
 
     if not STREAM_GATE.enter():
         return JSONResponse(
-            {"detail": "Nova está ocupada con otras conversaciones. Prueba en unos segundos."},
+            {"detail": "PracticeSpeak está ocupada con otras conversaciones. Prueba en unos segundos."},
             status_code=503,
         )
 
@@ -300,7 +300,7 @@ async def immersive_stream(payload: ImmersiveRequest):
         except NovaError as exc:
             yield _sse({"type": "error", "detail": f"Modelo local no disponible. {exc}"})
         except ValueError as exc:
-            yield _sse({"type": "error", "detail": f"Nova dio una respuesta inválida. {exc}"})
+            yield _sse({"type": "error", "detail": f"PracticeSpeak dio una respuesta inválida. {exc}"})
         finally:
             STREAM_GATE.leave()
 
@@ -324,7 +324,7 @@ async def grammar(payload: GrammarRequest, request: Request):
     except NovaError as exc:
         raise HTTPException(status_code=503, detail=f"Modelo local no disponible. {exc}") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail=f"Nova dio una respuesta inválida. {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"PracticeSpeak dio una respuesta inválida. {exc}") from exc
     return JSONResponse(result)
 
 

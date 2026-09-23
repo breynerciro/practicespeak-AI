@@ -14,7 +14,7 @@
   </button>
   <p class="start-hint">
     {settings.mode === 'voice'
-      ? 'Haz clic en el orbe y habla con Nova. Te irá corrigiendo al momento.'
-      : 'Nova te saluda por escrito. Tú respondes escribiendo.'}
+      ? 'Haz clic en el orbe y habla con PracticeSpeak. Te irá corrigiendo al momento.'
+      : 'PracticeSpeak te saluda por escrito. Tú respondes escribiendo.'}
   </p>
 </div>

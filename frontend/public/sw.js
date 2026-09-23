@@ -1,8 +1,8 @@
-// Service worker de Nova (PWA instalable). Shell offline:
+// Service worker de PracticeSpeak AI (PWA instalable). Shell offline:
 // precarga la portada y cachea bajo demanda los assets del build (hasheados).
 // Ruta servida en /sw.js para que el alcance cubra toda la app.
 
-const CACHE = 'nova-v1'
+const CACHE = 'psai-v2'
 
 const PRECACHE = [
   '/',
@@ -34,8 +34,11 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request
-  if (req.method !== 'GET') return
+  // La API nunca pasa por el SW: debe ir siempre a la red (con su cabecera
+  // de código de acceso) y jamás servirse desde caché.
   const url = new URL(req.url)
+  if (req.method !== 'GET') return
+  if (url.origin === self.location.origin && url.pathname.startsWith('/api/')) return
   if (url.origin !== self.location.origin) return
 
   if (req.mode === 'navigate') {

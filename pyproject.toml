@@ -1,7 +1,7 @@
 [project]
-name = "nova-tutor"
+name = "practicespeak-ai"
 version = "1.0.0"
-description = "Local voice & text language tutor powered by Ollama + Whisper"
+description = "PracticeSpeak AI — local voice & text language tutor powered by Ollama + Whisper"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 

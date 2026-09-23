@@ -34,13 +34,14 @@ class ProfileStore {
       this.current = { id: saved.id, name: saved.name, created_at: 0, sessions: 0 }
       this.gateOpen = false
     }
-    // carga en segundo plano de la lista real
-    this.refresh()
+    // La lista de perfiles NO se pide aquí: App la carga cuando la puerta de
+    // acceso está resuelta (sin código o ya validado), evitando 401 prematuros.
   }
 
   async refresh() {
     try {
-      this.list = await listProfiles()
+      const list = await listProfiles()
+      this.list = Array.isArray(list) ? list : []
       this.loaded = true
       // si el perfil guardado existe en el servidor, actualiza sus datos
       if (this.current) {

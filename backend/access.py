@@ -1,4 +1,4 @@
-"""Protección para compartir Nova por URL con amigos.
+"""Protección para compartir PracticeSpeak AI por URL con amigos.
 
 Tres piezas independientes (todas opcionales):
 

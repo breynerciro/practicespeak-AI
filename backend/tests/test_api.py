@@ -475,9 +475,18 @@ class TestStreamGate:
 
         self._start_stream(client, monkeypatch)
         assert access.STREAM_GATE.active == 0
+
+
+class TestBranding:
+    def test_index_contains_brand(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "Nova" in resp.text
+        assert "PracticeSpeak" in resp.text
+
+    def test_api_title_is_practicespeak(self):
+        from backend.main import app
+
+        assert app.title == "PracticeSpeak AI"
 
 
 class TestServiceWorker:

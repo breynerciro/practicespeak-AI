@@ -30,7 +30,7 @@
       enterkeyhint="send"
       maxlength="1000"
       placeholder={PLACEHOLDERS[settings.lang]}
-      aria-label="Escribe tu respuesta a Nova"
+      aria-label="Escribe tu respuesta a PracticeSpeak"
       onkeydown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault()

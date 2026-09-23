@@ -26,9 +26,17 @@ describe('App', () => {
     expect(screen.getByPlaceholderText('Tu nombre o apodo…')).toBeTruthy()
   })
 
-  it('escribe el nombre y crea la persona', async () => {
+it('escribe el nombre y crea la persona', async () => {
     const realFetch = window.fetch
-    window.fetch = (async () => ({ ok: true, json: async () => ({ id: 3, name: 'Ana' }) })) as unknown as typeof fetch
+    // Respuesta distinta según ruta y método: la lista (GET) es un array,
+    // la creación (POST) un objeto.
+    window.fetch = (async (input: any, init?: RequestInit) => ({
+      ok: true,
+      json: async () =>
+        String(input).includes('/api/profiles') && (init?.method || 'GET').toUpperCase() === 'GET'
+          ? [{ id: 1, name: 'Ana', created_at: 0, sessions: 0 }]
+          : { id: 3, name: 'Ana' },
+    })) as unknown as typeof fetch
     render(App)
     try {
       const input = screen.getByPlaceholderText('Tu nombre o apodo…') as HTMLInputElement

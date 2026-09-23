@@ -1,6 +1,7 @@
 // Puerta de acceso compartida: si el servidor pide código (NOVA_ACCESS_CODE),
 // se pregunta una vez y se recuerda en localStorage para las siguientes visitas.
 // Si la URL trae ?code=…, se valida en silencio y se limpia de la barra.
+// Marca: PracticeSpeak AI.
 import { getHealth, sendLog, setAccessCode } from './api'
 
 const LS_KEY = 'nova-access'

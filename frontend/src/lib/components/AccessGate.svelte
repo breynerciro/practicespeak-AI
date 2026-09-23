@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Puerta de acceso: pide el código compartido antes de usar Nova cuando el
-  // servidor está protegido con NOVA_ACCESS_CODE. Reutiliza el estilo de la
+  // Puerta de acceso: pide el código compartido antes de usar PracticeSpeak AI
+  // cuando el servidor está protegido con NOVA_ACCESS_CODE. Reutiliza el estilo de la
   // puerta de persona (.profile-gate / .gate-card / .gate-form).
   import { access } from '../access.svelte'
   import Icon from './Icon.svelte'
@@ -26,7 +26,7 @@
   <div class="profile-gate" role="dialog" aria-modal="true" aria-label="Introduce el código de acceso">
     <div class="gate-card">
       <div class="gate-logo"><Icon name="lock" /></div>
-      <h1>Nova</h1>
+      <h1>PracticeSpeak AI</h1>
       <p class="gate-hint">Este servidor es privado. Escribe el código que te compartió tu anfitrión para entrar.</p>
 
       <form

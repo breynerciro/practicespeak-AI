@@ -18,7 +18,7 @@
   const LABELS: Record<OrbState, string> = {
     idle: 'Pulsa para empezar a hablar',
     listening: 'Grabando. Pulsa para terminar de hablar',
-    speaking: 'Nova está hablando',
+    speaking: 'PracticeSpeak está hablando',
     thinking: 'Procesando tu respuesta',
   }
 

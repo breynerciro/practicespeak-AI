@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nova — instalador de un solo paso (pensado para quien no sabe de computadores)
+# PracticeSpeak AI — instalador de un solo paso (pensado para quien no sabe de computadores)
 # Uso:  bash install.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -8,7 +8,7 @@ say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ✓\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m✗\033[0m %s\n' "$*"; exit 1; }
 
-say "Bienvenido a la instalación de Nova (tutor de idiomas local)"
+say "Bienvenido a la instalación de PracticeSpeak AI (tutor de idiomas local)"
 
 # --- 1. Dependencias del sistema -------------------------------------------
 if ! command -v python3 >/dev/null; then
@@ -46,11 +46,11 @@ else
 fi
 
 if [ ! -d ".venv" ]; then
-  say "Preparando el entorno de Nova (unos minutos)…"
+  say "Preparando el entorno de PracticeSpeak AI (unos minutos)…"
   python3 -m venv .venv
 fi
 .venv/bin/pip install -q -r requirements.txt
-ok "Programas de Nova instalados"
+ok "Programas de PracticeSpeak AI instalados"
 
 say "Descargando el modelo de IA ($MODEL, una sola vez)…"
 if ! "$OLLAMA_BIN" list 2>/dev/null | grep -q "$MODEL"; then
@@ -66,14 +66,14 @@ if [ -d "$DESKTOP" ]; then
   cat > "$DESKTOP/nova-tutor.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Nova Tutor
+Name=PracticeSpeak AI
 Comment=Tutor de idiomas local
 Exec=$PWD/run.sh start
 Icon=audio-input-microphone
 Terminal=true
 EOF
   chmod +x "$DESKTOP/nova-tutor.desktop"
-  ok "Icono 'Nova Tutor' creado en tu escritorio"
+  ok "Icono 'PracticeSpeak AI' creado en tu escritorio"
 fi
 
 cat > "$PWD/nova" <<EOF
@@ -85,8 +85,8 @@ chmod +x "$PWD/nova"
 cat <<EOF
 
 =========================================================
-  ¡Listo! Para usar Nova:
-    1. Doble clic en el icono "Nova Tutor" del escritorio
+  ¡Listo! Para usar PracticeSpeak AI:
+    1. Doble clic en el icono "PracticeSpeak AI" del escritorio
        (o ejecuta:  ./nova start  en una terminal)
     2. En tu celular, escanea el código QR que aparecerá
     3. Elige un tema y empieza a hablar o escribir

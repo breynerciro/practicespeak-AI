@@ -47,6 +47,11 @@
 
   const correctionsCount = $derived(session.corrections.length)
   let grammarOpen = $state(false)
+
+  // Perfiles: se piden solo cuando la puerta de acceso ya está resuelta.
+  $effect(() => {
+    if (!access.checking && !access.gateOpen && !profileStore.loaded) profileStore.refresh()
+  })
 </script>
 
 <a class="skip-link" href="#nova-content">Saltar al contenido</a>

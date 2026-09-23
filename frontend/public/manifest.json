@@ -1,13 +1,13 @@
 {
-  "name": "Nova · Tutor de idiomas",
-  "short_name": "Nova",
+  "name": "PracticeSpeak AI · Tutor de idiomas",
+  "short_name": "PracticeSpeak",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6f2ec",
   "theme_color": "#f6f2ec",
-  "description": "Tutor de idiomas por voz o texto, 100% local, con correcciones en tiempo real.",
+  "description": "PracticeSpeak AI — tutor de idiomas por voz o texto, 100% local, con correcciones en tiempo real.",
   "icons": [
     {
       "src": "/static/icon-192.png",

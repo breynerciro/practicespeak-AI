@@ -1,6 +1,6 @@
 // Reproducción de audio TTS buffer con un solo AudioContext reutilizable.
 // `playBuffer` devuelve un handle; `stopPlayback()` corta la reproducción
-// actual (vista previa o respuesta de Nova).
+// actual (vista previa o respuesta de PracticeSpeak).
 
 let ctx: AudioContext | null = null
 let current: { id: number; src: AudioBufferSourceNode } | null = null

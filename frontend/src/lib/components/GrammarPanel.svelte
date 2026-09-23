@@ -74,7 +74,7 @@
   </header>
 
   <p class="grammar-lang">
-    Practica {LANG_NAMES_ES[settings.lang].toLowerCase()} · escribe lo que dirías y Nova lo corrige y explica.
+    Practica {LANG_NAMES_ES[settings.lang].toLowerCase()} · escribe lo que dirías y PracticeSpeak lo corrige y explica.
   </p>
 
   <div class="grammar-form">

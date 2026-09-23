@@ -63,7 +63,7 @@ WHISPER_BEAM = int(os.environ.get("NOVA_WHISPER_BEAM", str(_PROFILE["whisper_bea
 # debe presentarlo vía cabecera X-Nova-Code o ?code=. Vacío = sin protección.
 ACCESS_CODE = os.environ.get("NOVA_ACCESS_CODE", "").strip()
 # Máximo de conversaciones en streaming simultáneas (protege la CPU cuando
-# varias personas usan Nova a la vez). Cero = sin límite.
+# varias personas usan PracticeSpeak AI a la vez). Cero = sin límite.
 MAX_CONCURRENT_STREAMS = int(os.environ.get("NOVA_MAX_CONCURRENT_STREAMS", "2"))
 # Peticiones por IP para endpoints caros (/api/chat, /api/grammar, /api/tts,
 # /api/audio) en una ventana de 60 s. Cero = sin límite.

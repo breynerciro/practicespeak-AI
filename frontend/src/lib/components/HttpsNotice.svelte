@@ -26,6 +26,6 @@
       <b>Necesitas la versión segura</b><br />
       El micrófono solo funciona con HTTPS.
     </p>
-    <a class="btn" href={href}>Abrir Nova segura</a>
+    <a class="btn" href={href}>Abrir PracticeSpeak AI segura</a>
   </div>
 {/if}
