@@ -178,15 +178,19 @@ def _ensure_piper_model(voice_id: str) -> str:
     return onnx
 
 
-def _synthesize_piper(piper_bin: str, texto: str, voice_id: str) -> bytes:
+def _synthesize_piper(piper_bin: str, texto: str, voice_id: str, length_scale: float = 1.0) -> bytes:
     """Sintetiza con el binario piper (CPU; puede descargar la voz a la
-    primera) y devuelve el audio WAV. `piper_bin` es la ruta ya resuelta."""
+    primera) y devuelve el audio WAV. `piper_bin` es la ruta ya resuelta y
+    `length_scale` ajusta la velocidad (1.0 = normal; <1 más rápido)."""
     onnx = _ensure_piper_model(voice_id)
     out_fd, out_path = tempfile.mkstemp(suffix=".wav", dir=config.PIPER_HOME)
     os.close(out_fd)
     try:
+        cmd = [piper_bin, "--model", onnx, "--output_file", out_path]
+        if length_scale != 1.0:
+            cmd += ["--length_scale", f"{length_scale:.3f}"]
         proc = subprocess.run(
-            [piper_bin, "--model", onnx, "--output_file", out_path],
+            cmd,
             input=texto.encode("utf-8"),
             capture_output=True,
             timeout=120,
@@ -200,8 +204,23 @@ def _synthesize_piper(piper_bin: str, texto: str, voice_id: str) -> bytes:
             os.remove(out_path)
 
 
-async def _sintetizar_edge(texto: str, voice: str) -> bytes:
-    communicate = edge_tts.Communicate(texto, voice)
+def _clamp_speed(speed: float) -> float:
+    """Velocidad de habla acotada (0.5×–1.5×)."""
+    try:
+        speed = float(speed)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(0.5, min(1.5, speed))
+
+
+def _rate_for_speed(speed: float) -> str | None:
+    """Cadena `rate` de edge-tts para una velocidad; None si es la normal."""
+    pct = round((_clamp_speed(speed) - 1.0) * 100)
+    return None if pct == 0 else f"{pct:+d}%"
+
+
+async def _sintetizar_edge(texto: str, voice: str, rate: str | None = None) -> bytes:
+    communicate = edge_tts.Communicate(texto, voice, rate=rate) if rate else edge_tts.Communicate(texto, voice)
     chunks = []
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
@@ -209,28 +228,33 @@ async def _sintetizar_edge(texto: str, voice: str) -> bytes:
     return b"".join(chunks)
 
 
-async def sintetizar(texto: str, language: str, gender: str = "female", voice: str = "") -> bytes:
+async def sintetizar(texto: str, language: str, gender: str = "female", voice: str = "", speed: float = 1.0) -> bytes:
     """Convierte texto en audio.
 
     Si `voice` viene dado, lo usa tal cual: un id de piper (`*_*-*`) se
     sintetiza en local (descargando el modelo a la primera) y cualquier otro
     id se envía a edge-tts. Sin `voice` se usa la pareja por defecto del
-    idioma/género.
+    idioma/género. `speed` (0.5×–1.5×) se aplica a ambos motores.
     """
+    speed = _clamp_speed(speed)
+    rate = _rate_for_speed(speed)
+    length_scale = 1.0 / speed if speed != 1.0 else 1.0
     voice = voice.strip()
     if voice:
         piper_bin = _piper_binary()
         if piper_bin and voice in _PIPER_IDS:
             try:
-                return await asyncio.to_thread(_synthesize_piper, piper_bin, texto, voice)
+                return await asyncio.to_thread(_synthesize_piper, piper_bin, texto, voice, length_scale)
             except Exception as exc:
                 log_info(f"PIPER_FALLBACK edge motivo={exc}")
-        return await _sintetizar_edge(texto, voice)
+        return await _sintetizar_edge(texto, voice, rate)
 
     voice = _resolve_voice(language, gender)
     if piper_bin := _piper_binary():
         try:
-            return await asyncio.to_thread(_synthesize_piper, piper_bin, texto, _piper_voice(language, gender))
+            return await asyncio.to_thread(
+                _synthesize_piper, piper_bin, texto, _piper_voice(language, gender), length_scale
+            )
         except Exception as exc:
             log_info(f"PIPER_FALLBACK edge motivo={exc}")
-    return await _sintetizar_edge(texto, voice)
+    return await _sintetizar_edge(texto, voice, rate)

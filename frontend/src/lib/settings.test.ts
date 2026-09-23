@@ -24,4 +24,21 @@ describe('settings', () => {
     expect(localStorage.getItem('mode')).toBe('text')
     expect(localStorage.getItem('gender')).toBe('male')
   })
+
+  it('por defecto usa velocidad y sensibilidad normales', () => {
+    expect(settings.speed).toBe(1)
+    expect(settings.micSensitivity).toBe('normal')
+  })
+
+  it('persiste la velocidad de voz', () => {
+    settings.setSpeed(1.25)
+    expect(settings.speed).toBe(1.25)
+    expect(localStorage.getItem('ttsSpeed')).toBe('1.25')
+  })
+
+  it('persiste la sensibilidad del micrófono', () => {
+    settings.setMicSensitivity('alta')
+    expect(settings.micSensitivity).toBe('alta')
+    expect(localStorage.getItem('micSensitivity')).toBe('alta')
+  })
 })

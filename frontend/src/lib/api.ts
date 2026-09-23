@@ -122,6 +122,7 @@ export async function getTtsBuffer(
   language: string,
   gender: string,
   voice?: string,
+  speed = 1,
 ): Promise<ArrayBuffer | null> {
   const params = new URLSearchParams({
     lang: language,
@@ -129,6 +130,7 @@ export async function getTtsBuffer(
     text: text,
   })
   if (voice) params.set('voice', voice)
+  if (speed !== 1) params.set('speed', String(speed))
   const resp = await fetch(`/api/tts?${params.toString()}`)
   if (!resp.ok) return null
   return resp.arrayBuffer()

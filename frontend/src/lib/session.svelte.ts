@@ -11,7 +11,7 @@ import {
 } from './api'
 import { micRecorder } from './audio/recorder'
 import { playBuffer, stopPlayback, unlockAudio } from './audio/playback'
-import { DEFAULT_VAD, tooSmall } from './audio/vad'
+import { vadFor, tooSmall } from './audio/vad'
 import { LANG_NAMES_ES } from './i18n'
 import { profileStore } from './profile.svelte'
 import { settings } from './settings.svelte'
@@ -50,6 +50,14 @@ class SessionStore {
   private streamFinished = false
   private speechFailed = false
   private drainJob: Promise<void> | null = null
+  /** Escucha de interrupción activa mientras Nova habla. */
+  private bargeOn = false
+  /** El estudiante ya habló por encima de Nova (interrumpió). */
+  private bargeInFired = false
+  /** El blob de la interrupción está siendo transcrito/procesado. */
+  private bargeProcessing = false
+  /** Generación del habla actual: la invalida un barge y cada respuesta nueva. */
+  private speechGen = 0
 
   // ---------------------------------------------------------------- helpers
   resetStream() {
@@ -110,12 +118,14 @@ class SessionStore {
       let corrections: Correction[] = []
       let gotTopic = ''
       this.resetStream()
+      const gen = ++this.speechGen
+      this.spokenChars = 0
       for await (const ev of immersiveStream({ mode: 'start', language: settings.lang, topic, profile_id: profileId })) {
         if (ev.type === 'session_id') this.sessionId = ev.session_id
         else if (ev.type === 'topic') gotTopic = ev.topic
         else if (ev.type === 'delta') {
           this.streamText = ev.text
-          if (settings.mode === 'voice') this.pumpSpeech(ev.text)
+          if (settings.mode === 'voice') this.pumpSpeech(gen, ev.text)
         }
         else if (ev.type === 'corrections') corrections = stripCorrections(ev.corrections)
         else if (ev.type === 'done') {
@@ -135,7 +145,7 @@ class SessionStore {
         this.transcriptOpen = false
         this.requestFocus()
       } else {
-        this.finishSpeech(reply)
+        this.finishSpeech(reply, gen)
       }
     } catch (e) {
       sendLog('IMMERSIVE_ERR ' + (e instanceof Error ? e.message : String(e)))
@@ -198,9 +208,13 @@ class SessionStore {
   }
 
   // ---------------------------------------------------------------- voice
-  /** Punto de entrada al pulsar el orbe (mientras escucha para o termina). */
+  /** Punto de entrada al pulsar el orbe (mientras escucha, habla o termina). */
   orbTap() {
-    if (!this.running || this.speaking || this.busy || settings.mode === 'text') return
+    if (!this.running || this.busy || settings.mode === 'text') return
+    if (this.speaking) {
+      this.bargeIn()
+      return
+    }
     if (micRecorder.recording) {
       micRecorder.stop()
     } else {
@@ -214,7 +228,7 @@ class SessionStore {
     this.orb = 'listening'
     this.status = 'Escuchando… habla, o toca el orbe al terminar'
     try {
-      const blob = await micRecorder.begin(DEFAULT_VAD, {
+      const blob = await micRecorder.begin(vadFor(settings.micSensitivity), {
         onLevel: (level) => (this.energy = level),
         onPauseWarn: () => {
           this.status = 'Te sigo escuchando… (pausa)'
@@ -273,6 +287,8 @@ class SessionStore {
 
   private async continueTurn(text: string, origin: 'text' | 'voice') {
     this.resetStream()
+    const gen = ++this.speechGen
+    this.spokenChars = 0
     try {
       let reply = ''
       let corrections: Correction[] = []
@@ -287,7 +303,7 @@ class SessionStore {
         if (ev.type === 'topic') topic = ev.topic
         else if (ev.type === 'delta') {
           this.streamText = ev.text
-          if (settings.mode === 'voice') this.pumpSpeech(ev.text)
+          if (settings.mode === 'voice') this.pumpSpeech(gen, ev.text)
         }
         else if (ev.type === 'corrections') corrections = stripCorrections(ev.corrections)
         else if (ev.type === 'done') {
@@ -307,7 +323,7 @@ class SessionStore {
         this.status = 'Escribe tu respuesta…'
         this.requestFocus()
       } else {
-        this.finishSpeech(reply)
+        this.finishSpeech(reply, gen)
       }
     } catch (e) {
       this.busy = false
@@ -327,22 +343,25 @@ class SessionStore {
 
   // ------------------------------------------------ habla en streaming (TTS)
   /** Con cada delta del stream: encola las frases ya completas. */
-  private pumpSpeech(streamed: string) {
+  private pumpSpeech(gen: number, streamed: string) {
+    if (gen !== this.speechGen) return
     if (streamed.length <= this.spokenChars) return
     const { consumed, sentences } = extractCompleted(streamed, this.spokenChars)
-    if (sentences.length) this.enqueueSpeech(sentences)
+    if (sentences.length) this.enqueueSpeech(gen, sentences)
     if (consumed > this.spokenChars) this.spokenChars = Math.min(consumed, streamed.length)
   }
 
   /** Al recibir `done`: habla el tramo final e inicia la escucha al terminar. */
-  private finishSpeech(reply: string) {
+  private finishSpeech(reply: string, gen: number) {
+    if (gen !== this.speechGen) return
     this.streamFinished = true
     const rest = reply.slice(this.spokenChars).trim()
-    if (rest) this.enqueueSpeech([rest])
+    if (rest) this.enqueueSpeech(gen, [rest])
     else this.kickDrain()
   }
 
-  private enqueueSpeech(chunks: string[]) {
+  private enqueueSpeech(gen: number, chunks: string[]) {
+    if (gen !== this.speechGen) return
     this.speechQueue.push(...chunks)
     this.kickDrain()
   }
@@ -356,6 +375,8 @@ class SessionStore {
 
   private async drain() {
     while (this.running && this.speechQueue.length) {
+      if (!this.bargeOn && !this.bargeInFired) this.startBarge()
+      const gen = this.speechGen
       const chunk = this.speechQueue.shift()!
       this.orb = 'speaking'
       this.speaking = true
@@ -363,7 +384,8 @@ class SessionStore {
       stopPlayback()
       let ok = false
       try {
-        const data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang])
+        const data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang], settings.speed)
+        if (gen !== this.speechGen) break
         if (data) {
           const h = await playBuffer(data, () => {})
           ok = h !== null
@@ -371,6 +393,7 @@ class SessionStore {
       } catch {
         ok = false
       }
+      if (gen !== this.speechGen) break
       if (!ok) {
         this.speechFailed = true
         break
@@ -380,6 +403,8 @@ class SessionStore {
       this.speechQueue = []
       this.speaking = false
       if (!this.running) return
+      if (this.bargeInFired || this.bargeProcessing) return
+      this.stopBarge()
       if (this.speechFailed) {
         this.speechFailed = false
         sendLog('TTS_FALLO')
@@ -394,12 +419,61 @@ class SessionStore {
     }
   }
 
+  /** Empieza a escuchar en segundo plano para que el estudiante interrumpa. */
+  private startBarge() {
+    this.bargeOn = true
+    micRecorder
+      .begin(vadFor(settings.micSensitivity), {
+        onLevel: (level) => (this.energy = level),
+        onBarge: () => this.bargeIn(),
+      })
+      .then(async (blob) => {
+        this.bargeOn = false
+        if (!this.running) return
+        if (!this.bargeInFired) return
+        this.bargeInFired = false
+        this.bargeProcessing = true
+        try {
+          await this.processVoiceBlob(blob)
+        } finally {
+          this.bargeProcessing = false
+        }
+      })
+      .catch(() => {
+        this.bargeOn = false
+      })
+  }
+
+  /** Interrupción: corta a Nova y pasa a escucharte a ti. */
+  private bargeIn() {
+    if (!this.running || this.bargeInFired || this.orb !== 'speaking') return
+    this.bargeInFired = true
+    this.speechGen++
+    this.speechQueue = []
+    stopPlayback()
+    this.speaking = false
+    this.orb = 'listening'
+    this.status = 'Vale, te escucho…'
+    sendLog('BARGE_IN')
+  }
+
+  /** Cancela la escucha de fondo ya no necesaria (solo si no hubo interrupción). */
+  private stopBarge() {
+    this.bargeOn = false
+    this.bargeInFired = false
+    micRecorder.cancel()
+  }
+
   private clearSpeech() {
     this.speechQueue = []
     this.spokenChars = 0
     this.streamFinished = false
     this.speechFailed = false
     this.speaking = false
+    this.bargeOn = false
+    this.bargeInFired = false
+    this.bargeProcessing = false
+    this.speechGen = 0
   }
 
   private startListeningWithDelay() {

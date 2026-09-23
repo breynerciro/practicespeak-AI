@@ -190,7 +190,7 @@ def fake_transcribe(monkeypatch):
 @pytest.fixture()
 def fake_sintetizar(monkeypatch):
     """Reemplaza sintetizar para no salir a edge_tts."""
-    async def fake(text, language, gender="female", voice=""):
+    async def fake(text, language, gender="female", voice="", speed=1.0):
         return b"FAKEMP3"
 
     monkeypatch.setattr("backend.main.sintetizar", fake)
@@ -233,7 +233,7 @@ class TestTTS:
     def test_gender_parameter_passed_through(self, client, monkeypatch):
         seen = {}
 
-        async def fake(text, language, gender="female", voice=""):
+        async def fake(text, language, gender="female", voice="", speed=1.0):
             seen.update(text=text, language=language, gender=gender, voice=voice)
             return b"FAKEMP3"
 
@@ -245,7 +245,7 @@ class TestTTS:
     def test_voice_parameter_passed_through(self, client, monkeypatch):
         seen = {}
 
-        async def fake(text, language, gender="female", voice=""):
+        async def fake(text, language, gender="female", voice="", speed=1.0):
             seen.update(voice=voice)
             return b"FAKEMP3"
 
@@ -254,10 +254,34 @@ class TestTTS:
         assert resp.status_code == 200
         assert seen["voice"] == "es_ES-davefx-medium"
 
+    def test_speed_parameter_passed_through(self, client, monkeypatch):
+        seen = {}
+
+        async def fake(text, language, gender="female", voice="", speed=1.0):
+            seen.update(speed=speed)
+            return b"FAKEMP3"
+
+        monkeypatch.setattr("backend.main.sintetizar", fake)
+        resp = client.get("/api/tts", params={"text": "hola", "lang": "en", "speed": "1.25"})
+        assert resp.status_code == 200
+        assert seen["speed"] == 1.25
+
+    def test_speed_defaults_to_normal(self, client, monkeypatch):
+        seen = {}
+
+        async def fake(text, language, gender="female", voice="", speed=1.0):
+            seen.update(speed=speed)
+            return b"FAKEMP3"
+
+        monkeypatch.setattr("backend.main.sintetizar", fake)
+        resp = client.get("/api/tts", params={"text": "hola", "lang": "en"})
+        assert resp.status_code == 200
+        assert seen["speed"] == 1.0
+
     def test_gender_defaults_to_female(self, client, monkeypatch):
         seen = {}
 
-        async def fake(text, language, gender="female", voice=""):
+        async def fake(text, language, gender="female", voice="", speed=1.0):
             seen.update(gender=gender)
             return b"FAKEMP3"
 
@@ -267,7 +291,7 @@ class TestTTS:
         assert seen["gender"] == "female"
 
     def test_sintetizar_error_returns_502(self, client, monkeypatch):
-        async def fail(text, language, gender="female", voice=""):
+        async def fail(text, language, gender="female", voice="", speed=1.0):
             raise RuntimeError("no internet")
 
         monkeypatch.setattr("backend.main.sintetizar", fail)

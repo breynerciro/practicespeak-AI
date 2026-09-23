@@ -19,9 +19,11 @@ class FakeCommunicate:
     """Reemplazo de edge_tts.Communicate que registra sus argumentos."""
 
     last_args = None
+    last_rate = None
 
-    def __init__(self, text, voice):
+    def __init__(self, text, voice, rate=None):
         type(self).last_args = (text, voice)
+        type(self).last_rate = rate
 
     async def stream(self):
         yield {"type": "audio", "data": b"aa"}
@@ -106,8 +108,8 @@ class TestSintetizar:
         monkeypatch.setattr(tts.shutil, "which", lambda _: "/usr/bin/piper")
         captured = {}
 
-        def fake_synth(piper_bin, texto, voice_id):
-            captured.update(piper_bin=piper_bin, texto=texto, voice_id=voice_id)
+        def fake_synth(piper_bin, texto, voice_id, length_scale=1.0):
+            captured.update(piper_bin=piper_bin, texto=texto, voice_id=voice_id, length_scale=length_scale)
             return b"RIFFwav"
 
         monkeypatch.setattr(tts, "_synthesize_piper", fake_synth)
@@ -117,6 +119,7 @@ class TestSintetizar:
             "piper_bin": "/usr/bin/piper",
             "texto": "hola",
             "voice_id": "es_ES-davefx-medium",
+            "length_scale": 1.0,
         }
 
     def test_piper_voice_override_falls_back_to_edge_on_error(self, monkeypatch):
@@ -288,6 +291,76 @@ class TestPiperBackend:
         downloads.clear()
         assert _ensure_piper_model("it_IT-paola-medium") == onnx
         assert downloads == []
+
+
+class TestSpeed:
+    def test_edge_rate_string_from_speed(self):
+        assert tts._rate_for_speed(1.0) is None
+        assert tts._rate_for_speed(0.8) == "-20%"
+        assert tts._rate_for_speed(1.25) == "+25%"
+
+    def test_clamp_speed(self):
+        assert tts._clamp_speed(5) == 1.5
+        assert tts._clamp_speed(0.1) == 0.5
+        assert tts._clamp_speed("no") == 1.0
+        assert tts._clamp_speed(1.1) == 1.1
+
+    @pytest.mark.parametrize(
+        "speed,expected_rate",
+        [(1.0, None), (0.8, "-20%"), (1.5, "+50%"), (2.0, "+50%")],
+    )
+    def test_rate_passed_to_edge(self, monkeypatch, speed, expected_rate):
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
+        run(sintetizar("hola", "en", "female", "", speed))
+        assert FakeCommunicate.last_rate == expected_rate
+
+    def test_speed_zero_clamped_to_minimum(self, monkeypatch):
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
+        run(sintetizar("hola", "en", "female", "", 0))
+        assert FakeCommunicate.last_rate == "-50%"
+
+    def test_piper_length_scale_from_speed(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tts.config, "TTS_BACKEND", "piper")
+        monkeypatch.setattr(tts.shutil, "which", lambda _: "/usr/bin/piper")
+        monkeypatch.setattr(tts.config, "PIPER_HOME", str(tmp_path))
+        onnx = tmp_path / "m.onnx"
+        onnx.write_bytes(b"onnx")
+        monkeypatch.setattr(tts, "_ensure_piper_model", lambda _voice: str(onnx))
+        captured = {}
+
+        class FakeRun:
+            def __call__(self, cmd, input=None, capture_output=False, timeout=120):
+                captured["cmd"] = cmd
+                out = cmd[cmd.index("--output_file") + 1]
+                with open(out, "wb") as fh:
+                    fh.write(b"RIFFwav")
+                return SimpleNamespace(returncode=0, stderr=b"")
+
+        monkeypatch.setattr(tts.subprocess, "run", FakeRun())
+        run(sintetizar("hola", "de", "male", "", 0.75))
+        idx = captured["cmd"].index("--length_scale")
+        assert captured["cmd"][idx + 1] == "1.333"
+
+    def test_piper_normal_speed_omits_length_scale(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tts.config, "TTS_BACKEND", "piper")
+        monkeypatch.setattr(tts.shutil, "which", lambda _: "/usr/bin/piper")
+        monkeypatch.setattr(tts.config, "PIPER_HOME", str(tmp_path))
+        onnx = tmp_path / "m.onnx"
+        onnx.write_bytes(b"onnx")
+        monkeypatch.setattr(tts, "_ensure_piper_model", lambda _voice: str(onnx))
+        captured = {}
+
+        class FakeRun:
+            def __call__(self, cmd, input=None, capture_output=False, timeout=120):
+                captured["cmd"] = cmd
+                out = cmd[cmd.index("--output_file") + 1]
+                with open(out, "wb") as fh:
+                    fh.write(b"RIFFwav")
+                return SimpleNamespace(returncode=0, stderr=b"")
+
+        monkeypatch.setattr(tts.subprocess, "run", FakeRun())
+        run(sintetizar("hola", "de", "male", "", 1.0))
+        assert "--length_scale" not in captured["cmd"]
 
 
 class TestListVoices:

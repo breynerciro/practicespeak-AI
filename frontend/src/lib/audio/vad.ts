@@ -18,6 +18,23 @@ export const DEFAULT_VAD: VADConfig = {
   minBlobBytes: 1500,
 }
 
+export type VADSensitivity = 'baja' | 'normal' | 'alta'
+
+/** Variantes de escucha según la sensibilidad elegida en Ajustes.
+ *  - `baja`: requiere voz más clara (evita cortes con ruido de fondo).
+ *  - `alta`: captura susurros y responde más rápido al silencio.
+ */
+export function vadFor(sensitivity: VADSensitivity = 'normal'): VADConfig {
+  switch (sensitivity) {
+    case 'baja':
+      return { threshold: 0.045, silenceMs: 2800, maxMs: DEFAULT_VAD.maxMs, minBlobBytes: DEFAULT_VAD.minBlobBytes }
+    case 'alta':
+      return { threshold: 0.015, silenceMs: 1800, maxMs: DEFAULT_VAD.maxMs, minBlobBytes: DEFAULT_VAD.minBlobBytes }
+    default:
+      return { ...DEFAULT_VAD }
+  }
+}
+
 /** RMS de un buffer de dominio temporal (analyser.getByteTimeDomainData). */
 export function computeRms(buf: Uint8Array): number {
   let acc = 0

@@ -70,6 +70,7 @@
       settings.lang,
       gender,
       settings.ttsVoice[settings.lang],
+      settings.speed,
     ).catch(() => null)
     if (!data) {
       toast('Voz no disponible ahora (sin conexión).')
@@ -173,6 +174,74 @@
           <option value={v.id}>{v.name}</option>
         {/each}
       </select>
+    </div>
+  </div>
+
+  <div class="menu-group">
+    <div class="menu-label">Velocidad de voz</div>
+    <div class="seg">
+      <button
+        type="button"
+        class="seg-btn"
+        class:active={settings.speed === 0.75}
+        onclick={() => settings.setSpeed(0.75)}
+      >
+        Lenta
+      </button>
+      <button
+        type="button"
+        class="seg-btn"
+        class:active={settings.speed === 1}
+        onclick={() => settings.setSpeed(1)}
+      >
+        Normal
+      </button>
+      <button
+        type="button"
+        class="seg-btn"
+        class:active={settings.speed === 1.25}
+        onclick={() => settings.setSpeed(1.25)}
+      >
+        Rápida
+      </button>
+      <button
+        type="button"
+        class="seg-btn"
+        class:active={settings.speed === 1.5}
+        onclick={() => settings.setSpeed(1.5)}
+      >
+        Turbo
+      </button>
+    </div>
+  </div>
+
+  <div class="menu-group">
+    <div class="menu-label">Sensibilidad del micrófono</div>
+    <div class="seg">
+      <button
+        type="button"
+        class="seg-btn"
+        class:active={settings.micSensitivity === 'baja'}
+        onclick={() => settings.setMicSensitivity('baja')}
+      >
+        Baja
+      </button>
+      <button
+        type="button"
+        class="seg-btn"
+        class:active={settings.micSensitivity === 'normal'}
+        onclick={() => settings.setMicSensitivity('normal')}
+      >
+        Normal
+      </button>
+      <button
+        type="button"
+        class="seg-btn"
+        class:active={settings.micSensitivity === 'alta'}
+        onclick={() => settings.setMicSensitivity('alta')}
+      >
+        Alta
+      </button>
     </div>
   </div>
 

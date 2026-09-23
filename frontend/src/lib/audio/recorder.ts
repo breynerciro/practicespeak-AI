@@ -6,6 +6,8 @@ import { DEFAULT_VAD, computeRms, type VADConfig } from './vad'
 export interface RecorderEvents {
   onLevel?: (level: number) => void
   onPauseWarn?: () => void
+  /** Voz sostenida detectada (≈100 ms) — usado para interrumpir a Nova. */
+  onBarge?: () => void
 }
 
 function pickMime(): string {
@@ -32,6 +34,8 @@ export class MicRecorder {
   private config: VADConfig = DEFAULT_VAD
   private warnPause = false
   private events: RecorderEvents = {}
+  private bargeFired = false
+  private bargeFrames = 0
 
   get recording(): boolean {
     return !!this.recorder
@@ -70,6 +74,8 @@ export class MicRecorder {
   async begin(config: VADConfig = DEFAULT_VAD, events: RecorderEvents = {}): Promise<Blob> {
     this.config = config
     this.events = events
+    this.bargeFired = false
+    this.bargeFrames = 0
     const stream = await this.ensureMic()
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
       try {
@@ -164,20 +170,28 @@ export class MicRecorder {
         this.sawVoice = true
         this.lastVoiceAt = now
         this.warnPause = false
-      } else if (this.sawVoice && this.lastVoiceAt !== null) {
-        const quiet = now - this.lastVoiceAt
-        if (quiet > 1200 && !this.warnPause) {
-          this.warnPause = true
-          this.events.onPauseWarn?.()
+        this.bargeFrames++
+        if (this.events.onBarge && !this.bargeFired && this.bargeFrames >= 6) {
+          this.bargeFired = true
+          this.events.onBarge()
         }
-        if (quiet > this.config.silenceMs) {
-          this.stop()
-          return
+      } else {
+        this.bargeFrames = 0
+        if (this.sawVoice && this.lastVoiceAt !== null) {
+          const quiet = now - this.lastVoiceAt
+          if (quiet > 1200 && !this.warnPause) {
+            this.warnPause = true
+            this.events.onPauseWarn?.()
+          }
+          if (quiet > this.config.silenceMs) {
+            this.stop()
+            return
+          }
         }
       }
+      this.maxTimer = setTimeout(() => this.stop(), this.config.maxMs)
     }
     this.raf = requestAnimationFrame(loop)
-    this.maxTimer = setTimeout(() => this.stop(), this.config.maxMs)
   }
 
   private stopVAD() {

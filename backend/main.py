@@ -347,10 +347,10 @@ async def tts_voices(lang: str = ""):
 
 
 @app.get("/api/tts")
-async def tts(text: str, lang: str = "en", gender: str = "female", voice: str = ""):
-    log_info(f"TTS lang={lang} gender={gender} voice={voice or '-'} texto={text!r}")
+async def tts(text: str, lang: str = "en", gender: str = "female", voice: str = "", speed: float = 1.0):
+    log_info(f"TTS lang={lang} gender={gender} voice={voice or '-'} speed={speed:g} texto={text!r}")
     try:
-        data = await sintetizar(text, lang, gender, voice)
+        data = await sintetizar(text, lang, gender, voice, speed)
         # piper genera WAV; edge-tts genera MP3. El navegador lo detecta solo,
         # pero se anuncia el tipo correcto por si acaso.
         media = "audio/wav" if data.startswith(b"RIFF") else "audio/mpeg"

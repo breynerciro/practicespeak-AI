@@ -89,3 +89,46 @@ describe('SettingsMenu · selector de voz', () => {
     expect(select.options[0].value).toBe('')
   })
 })
+
+describe('SettingsMenu · velocidad y sensibilidad', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    settings.setSpeed(1)
+    settings.setMicSensitivity('normal')
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('elige la velocidad de voz y la persiste', async () => {
+    stubVoicesApi()
+    render(SettingsMenu, { props: { onclose: () => {} } })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Turbo' }))
+    expect(settings.speed).toBe(1.5)
+    expect(localStorage.getItem('ttsSpeed')).toBe('1.5')
+    await user.click(screen.getByRole('button', { name: 'Lenta' }))
+    expect(settings.speed).toBe(0.75)
+    expect(localStorage.getItem('ttsSpeed')).toBe('0.75')
+  })
+
+  it('marca como activa la velocidad en curso', async () => {
+    settings.setSpeed(1.25)
+    stubVoicesApi()
+    render(SettingsMenu, { props: { onclose: () => {} } })
+    const active = screen.getByRole('button', { name: 'Rápida' })
+    expect(active.className).toContain('active')
+  })
+
+  it('elige la sensibilidad del micrófono y la persiste', async () => {
+    stubVoicesApi()
+    render(SettingsMenu, { props: { onclose: () => {} } })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Alta' }))
+    expect(settings.micSensitivity).toBe('alta')
+    expect(localStorage.getItem('micSensitivity')).toBe('alta')
+    await user.click(screen.getByRole('button', { name: 'Baja' }))
+    expect(settings.micSensitivity).toBe('baja')
+    expect(localStorage.getItem('micSensitivity')).toBe('baja')
+  })
+})

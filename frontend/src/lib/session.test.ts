@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   beginRec: vi.fn(),
   releaseRec: vi.fn(),
   stopRec: vi.fn(),
+  cancelRec: vi.fn(),
 }))
 
 vi.mock('./api', () => ({
@@ -44,12 +45,14 @@ vi.mock('./audio/recorder', () => ({
     begin: mocks.beginRec,
     stop: mocks.stopRec,
     release: mocks.releaseRec,
+    cancel: mocks.cancelRec,
   },
 }))
 
 vi.mock('./audio/vad', () => ({
   DEFAULT_VAD: { threshold: 0.03, silenceMs: 2200, maxMs: 20000, minBlobBytes: 1500 },
   tooSmall: (size: number) => size < 100,
+  vadFor: () => ({ threshold: 0.03, silenceMs: 2200, maxMs: 20000, minBlobBytes: 1500 }),
 }))
 
 import { session } from './session.svelte'
@@ -190,6 +193,7 @@ function voiceBefore() {
   settings.setMode('voice')
   settings.setLang('en')
   settings.setGender('female')
+  settings.setSpeed(1)
   session.stop(false)
 }
 
@@ -229,6 +233,62 @@ describe('session (modo voz: TTS por frases)', () => {
     await session.start()
     await flush()
     expect(session.transcriptOpen).toBe(true)
+    await session.stop(true)
+  })
+
+  it('pasa la velocidad elegida al sintetizar', async () => {
+    settings.setSpeed(1.25)
+    await session.start()
+    const args = mocks.getTtsBuffer.mock.calls[0]
+    expect(args[1]).toBe('en')
+    expect(args[2]).toBe('female')
+    expect(args[4]).toBe(1.25)
+    await session.stop(true)
+  })
+
+  it('hablar por encima de Nova la interrumpe y pasa a escucharte', async () => {
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 9 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'delta', text: 'Hello there.' }
+      yield { type: 'done', reply: 'Hello there. This is a longer reply!', corrections: [] }
+    })
+    let resolveTts: ((v: ArrayBuffer | null) => void) | null = null
+    mocks.getTtsBuffer.mockImplementation(() => new Promise((r) => (resolveTts = r)))
+    await session.start()
+    await flush()
+    expect(session.orb).toBe('speaking')
+    const bargeEvents = mocks.beginRec.mock.calls
+      .map((c) => c[1] as { onBarge?: () => void } | undefined)
+      .find((e) => typeof e?.onBarge === 'function')
+    expect(bargeEvents).toBeTruthy()
+    bargeEvents!.onBarge!()
+    await flush()
+    expect(session.speaking).toBe(false)
+    expect(session.orb).toBe('listening')
+    expect(session.status).toContain('te escucho')
+    resolveTts!(new ArrayBuffer(8))
+    await flush()
+    await session.stop(true)
+  })
+
+  it('tocar el orbe mientras Nova habla la interrumpe', async () => {
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 10 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'done', reply: 'Let me finish… long reply with more words!', corrections: [] }
+    })
+    let resolveTts: ((v: ArrayBuffer | null) => void) | null = null
+    mocks.getTtsBuffer.mockImplementation(() => new Promise((r) => (resolveTts = r)))
+    await session.start()
+    await flush()
+    expect(session.speaking).toBe(true)
+    session.orbTap()
+    expect(session.speaking).toBe(false)
+    expect(session.orb).toBe('listening')
+    expect(session.status).toContain('te escucho')
+    resolveTts!(new ArrayBuffer(8))
+    await flush()
     await session.stop(true)
   })
 })
