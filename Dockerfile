@@ -7,11 +7,17 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Compilar el frontend (dist/ se sirve desde FastAPI en / y /static)
+COPY frontend/package.json frontend/package-lock.json frontend/
+RUN cd frontend && npm ci
+
+COPY frontend/ frontend/
+RUN cd frontend && npm run build
+
 COPY backend/ backend/
-COPY static/ static/
 
 RUN useradd -m nova && chown -R nova:nova /app
 USER nova

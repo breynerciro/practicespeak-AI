@@ -21,6 +21,18 @@ services:
       NOVA_OLLAMA_BASE_URL: http://ollama:11434
       NOVA_OLLAMA_MODEL: qwen3:4b
       NOVA_WHISPER_MODEL: small
+      # --- Compartir por URL (opcional) ---
+      # Código que les pedirás a tus amigos (déjalo vacío para no pedir nada)
+      NOVA_ACCESS_CODE: ${NOVA_ACCESS_CODE:-}
+      # Máximo de conversaciones simultáneas (protege la CPU)
+      NOVA_MAX_CONCURRENT_STREAMS: "2"
+      # Peticiones por IP y minuto en endpoints caros
+      NOVA_RATE_LIMIT_PER_MINUTE: "30"
+      # Base SQLite dentro del volumen persistente
+      NOVA_DB_PATH: /app/data/nova.db
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - nova-data:/app/data
     depends_on:

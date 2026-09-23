@@ -1,3 +1,4 @@
+import asyncio
 import os
 
 import pytest
@@ -64,6 +65,14 @@ class TestHealth:
         body = resp.json()
         assert body["ok"] is False
         assert body["ollama"] is False
+        assert body["needs_code"] is False
+
+    def test_needs_code_true_when_access_code_set(self, client, monkeypatch):
+        from backend import config
+
+        monkeypatch.setattr(config, "ACCESS_CODE", "secreto123")
+        body = client.get("/api/health").json()
+        assert body["needs_code"] is True
 
     def test_ok_true_when_ollama_up(self, client, monkeypatch):
         async def up():
@@ -337,8 +346,135 @@ class TestTtsVoices:
         assert set(resp.json()["voices"].keys()) == set(config.SUPPORTED_LANGUAGES)
 
 
-class TestIndex:
-    def test_index_served(self, client):
+class TestAccessCode:
+    """Puerta compartida: X-Nova-Code / ?code= exigidos en /api salvo health."""
+
+    @pytest.fixture()
+    def code_on(self, monkeypatch):
+        from backend import config
+
+        monkeypatch.setattr(config, "ACCESS_CODE", "Secreto")
+
+    def test_api_blocked_without_code(self, client, code_on):
+        assert client.get("/api/profiles").status_code == 401
+        assert client.post("/api/chat", json={"message": "hi"}).status_code == 401
+        assert client.get("/api/logs").status_code == 401
+
+    def test_health_and_static_stay_open(self, client, code_on):
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/").status_code == 200
+        assert client.get("/static/manifest.json").status_code == 200
+        assert client.get("/sw.js").status_code != 401  # abierto (200 si hay dist)
+
+    def test_header_code_ok_case_and_space_insensitive(self, client, code_on):
+        ok = {"X-Nova-Code": "  secreto "}
+        assert client.get("/api/profiles", headers=ok).status_code == 200
+
+    def test_query_code_ok(self, client, code_on):
+        assert client.get("/api/profiles?code=secreto").status_code == 200
+
+    def test_wrong_code_401(self, client, code_on):
+        resp = client.get("/api/profiles", headers={"X-Nova-Code": "mal"})
+        assert resp.status_code == 401
+        assert "C\u00f3digo" in resp.json()["detail"]
+
+    def test_stream_blocked_without_code(self, client, code_on):
+        resp = client.post("/api/immersive/stream", json={"mode": "start"})
+        assert resp.status_code == 401
+
+
+class TestRateLimit:
+    @pytest.fixture()
+    def strict_limit(self, monkeypatch):
+        from backend import access, config
+
+        monkeypatch.setattr(config, "RATE_LIMIT_PER_MINUTE", 2)
+        access._hits.clear()  # aislado de las peticiones de tests anteriores
+        yield
+        access._hits.clear()
+
+    def test_blocks_after_limit(self, client, strict_limit, ollama_ok):
+        url = "/api/grammar"
+        payload = {"text": "hola"}
+        assert client.post(url, json=payload).status_code == 200
+        assert client.post(url, json=payload).status_code == 200
+        resp = client.post(url, json=payload)
+        assert resp.status_code == 429
+        assert "Espera" in resp.json()["detail"]
+
+    def test_limit_is_per_ip(self, client, strict_limit, ollama_ok):
+        from starlette.testclient import TestClient
+
+        client_b = TestClient(app=client.app, client=("10.0.0.9", 1234))
+        payload = {"text": "hola"}
+        for _ in range(2):
+            client.post("/api/grammar", json=payload)
+        assert client_b.post("/api/grammar", json=payload).status_code == 200
+
+    def test_zero_disables(self, client, monkeypatch, ollama_ok):
+        from backend import config
+
+        monkeypatch.setattr(config, "RATE_LIMIT_PER_MINUTE", 0)
+        for _ in range(5):
+            assert client.post("/api/grammar", json={"text": "hola"}).status_code == 200
+
+    def test_cheap_endpoints_not_limited(self, client, strict_limit):
+        assert client.get("/api/profiles").status_code == 200
+        assert client.get("/api/health").status_code == 200
+
+
+class TestStreamGate:
+    @pytest.fixture()
+    def gate_one(self, monkeypatch):
+        from backend import access, config
+
+        monkeypatch.setattr(config, "MAX_CONCURRENT_STREAMS", 1)
+        # El gate singleton lee el límite al importar: parchear también la instancia
+        monkeypatch.setattr(access.STREAM_GATE, "limit", 1)
+
+    def _start_stream(self, client, monkeypatch):
+        async def fake_stream(mode, language, history, message, topic):
+            yield {"type": "delta", "text": "Hola"}
+            yield {"type": "done", "reply": "Hola", "corrections": []}
+
+        monkeypatch.setattr("backend.main.immersive_chat_stream", fake_stream)
+        return client.post(
+            "/api/immersive/stream",
+            json={"mode": "start", "topic": "travel"},
+        )
+
+    def test_second_stream_rejected_when_full(self, client, gate_one, monkeypatch, ollama_ok):
+        import threading
+        import time
+
+        response_holder: dict = {}
+
+        def first_request():
+            with client.stream("POST", "/api/immersive/stream", json={"mode": "start", "topic": "travel"}) as r:
+                response_holder["status"] = r.status_code
+                for _ in r.iter_lines():
+                    pass  # consumir el stream completo (~0.4 s)
+
+        async def slow_stream(mode, language, history, message, topic):
+            yield {"type": "delta", "text": "Hola"}
+            await asyncio.sleep(0.4)
+            yield {"type": "done", "reply": "Hola", "corrections": []}
+
+        monkeypatch.setattr("backend.main.immersive_chat_stream", slow_stream)
+        t = threading.Thread(target=first_request, daemon=True)
+        t.start()
+        time.sleep(0.15)  # el primer stream ocupa la única plaza
+        resp = client.post("/api/immersive/stream", json={"mode": "start"})
+        assert resp.status_code == 503
+        assert "ocupada" in resp.json()["detail"]
+        t.join(timeout=3)
+        assert response_holder["status"] == 200
+
+    def test_gate_released_after_stream(self, client, gate_one, monkeypatch, ollama_ok):
+        from backend import access
+
+        self._start_stream(client, monkeypatch)
+        assert access.STREAM_GATE.active == 0
         resp = client.get("/")
         assert resp.status_code == 200
         assert "Nova" in resp.text

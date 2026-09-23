@@ -1,10 +1,25 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/svelte'
 import App from './App.svelte'
 
+vi.mock('./lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./lib/api')>()),
+  getHealth: vi.fn().mockResolvedValue({
+    ollama: true,
+    model: 'qwen3:4b',
+    whisper: 'small',
+    ok: true,
+    public_hostname: '',
+    needs_code: false,
+  }),
+}))
+
 describe('App', () => {
-  it('muestra la puerta de persona al arrancar sin perfil', () => {
+  beforeEach(() => {
     localStorage.clear()
+  })
+
+  it('muestra la puerta de persona al arrancar sin perfil', () => {
     const { container } = render(App)
     expect(container.querySelector('.topbar')).toBeTruthy()
     expect(container.querySelector('.profile-gate')).toBeTruthy()
@@ -12,7 +27,6 @@ describe('App', () => {
   })
 
   it('escribe el nombre y crea la persona', async () => {
-    localStorage.clear()
     const realFetch = window.fetch
     window.fetch = (async () => ({ ok: true, json: async () => ({ id: 3, name: 'Ana' }) })) as unknown as typeof fetch
     render(App)

@@ -58,6 +58,17 @@ NUM_PREDICT = int(os.environ.get("NOVA_NUM_PREDICT", str(_PROFILE["num_predict"]
 WHISPER_MODEL_SIZE = os.environ.get("NOVA_WHISPER_MODEL", _PROFILE["whisper_model"])
 WHISPER_BEAM = int(os.environ.get("NOVA_WHISPER_BEAM", str(_PROFILE["whisper_beam"])))
 
+# --- Acceso (compartir por URL) ---
+# Código compartido: si está definido, toda petición a /api (salvo /api/health)
+# debe presentarlo vía cabecera X-Nova-Code o ?code=. Vacío = sin protección.
+ACCESS_CODE = os.environ.get("NOVA_ACCESS_CODE", "").strip()
+# Máximo de conversaciones en streaming simultáneas (protege la CPU cuando
+# varias personas usan Nova a la vez). Cero = sin límite.
+MAX_CONCURRENT_STREAMS = int(os.environ.get("NOVA_MAX_CONCURRENT_STREAMS", "2"))
+# Peticiones por IP para endpoints caros (/api/chat, /api/grammar, /api/tts,
+# /api/audio) en una ventana de 60 s. Cero = sin límite.
+RATE_LIMIT_PER_MINUTE = int(os.environ.get("NOVA_RATE_LIMIT_PER_MINUTE", "30"))
+
 # --- TTS ---
 # NOVA_TTS_BACKEND=edge usa edge-tts (necesita internet) y
 # NOVA_TTS_BACKEND=piper usa piper local con fallback a edge.
@@ -78,5 +89,9 @@ HTTPS_PORT = int(os.environ.get("NOVA_HTTPS_PORT", "8443"))
 # Dominio público HTTPS (para redirección y avisos del frontend); vacío = sin redirect
 PUBLIC_HOSTNAME = os.environ.get("NOVA_PUBLIC_HOSTNAME", "")
 
-# Log de Ollama/Tailscale para run.sh
-LOG_DIR = os.environ.get("NOVA_LOG_DIR", "/tmp/nova")
+# --- Datos persistentes ---
+# Carpeta para la base SQLite (y logs de run.sh). IMPORTANTE: fuera de /tmp,
+# para que las sesiones y correcciones sobrevivan a los reinicios cuando el
+# servidor comparte con varias personas.
+DATA_DIR = os.path.expanduser(os.environ.get("NOVA_DATA_DIR", "~/.local/share/nova"))
+LOG_DIR = os.environ.get("NOVA_LOG_DIR", os.path.join(DATA_DIR, "logs"))

@@ -138,13 +138,53 @@ make dev     # uvicorn --reload
   Tras la primera visita el service worker permite abrir Nova sin conexión (voz y LLM seguirán
   necesitando el servidor).
 
+## Compartir Nova con amigos (URL pública)
+
+Nova puede abrirse a internet para que tus amigos practiquen desde cualquier
+red con una URL https fija, **sin abrir puertos del router**:
+
+```bash
+./run.sh start          # arranca Nova + Ollama
+./run.sh funnel on      # publica https://<tu-host>.ts.net (Tailscale Funnel)
+./run.sh funnel status  # muestra la URL pública
+./run.sh funnel off     # cierra el acceso cuando quieras
+```
+
+Comparte la URL y el código de acceso por un canal privado (WhatsApp, etc.).
+
+Para proteger tu CPU y tus datos, define antes en `.env`:
+
+```ini
+NOVA_ACCESS_CODE=nova2026        # código compartido que pedirán a tus amigos
+NOVA_MAX_CONCURRENT_STREAMS=2    # conversaciones a la vez (protege la CPU)
+NOVA_RATE_LIMIT_PER_MINUTE=30    # peticiones por IP y minuto en endpoints caros
+```
+
+Cuando el servidor tiene `NOVA_ACCESS_CODE`, los navegadores muestran una
+pantalla pidiendo el código antes de usar la API (se recuerda en el
+dispositivo; también se puede pasar en la URL como `?code=…`). `/api/health`
+queda abierta a propósito para poder comprobar el estado sin credenciales.
+
+Alternativas al Funnel: **cloudflared** (túnel gratuito, tu propio dominio) o
+**Caddy** como proxy inverso con tu dominio y puertos abiertos.
+
+> Datos: la base SQLite vive ahora en `~/.local/share/nova/nova.db`
+> (`NOVA_DATA_DIR`), fuera de `/tmp`, para que el progreso de tus amigos
+> sobreviva a los reinicios. Las instalaciones antiguas se migran solas.
+
+### En Docker
+
+Las mismas variables van en `docker-compose.yml` (`NOVA_ACCESS_CODE`, etc.) y
+la base persiste en el volumen `nova-data`.
+
 ## HTTPS for the microphone
 
 `getUserMedia` requires a secure context. Options:
 
-1. **Tailscale + MagicDNS certs** (current setup): `tailscale cert` → mount in `certs/`.
-2. **Caddy** reverse proxy with your own domain.
-3. **cloudflared** tunnel (free, no port forwarding).
+1. **Tailscale Funnel** (recommended for sharing): `./run.sh funnel on` — public HTTPS, no port forwarding.
+2. **Tailscale + MagicDNS certs** (LAN only): `tailscale cert` → mount in `certs/`.
+3. **Caddy** reverse proxy with your own domain.
+4. **cloudflared** tunnel (free, no port forwarding).
 
 ## Project layout
 

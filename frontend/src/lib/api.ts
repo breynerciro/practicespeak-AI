@@ -10,6 +10,21 @@ import type {
   TtsVoice,
 } from './types'
 
+// Código de acceso compartido (si el servidor lo pide). Lo rellena el store
+// `access` al validar la puerta; también se puede fijar desde la URL (?code=).
+let accessCode = ''
+
+/** Fija el código que viaja en cada petición (cabecera X-Nova-Code). */
+export function setAccessCode(code: string): void {
+  accessCode = code
+}
+
+function headers(): Record<string, string> {
+  const h: Record<string, string> = {}
+  if (accessCode) h['X-Nova-Code'] = accessCode
+  return h
+}
+
 async function jsonOrThrow(resp: Response): Promise<any> {
   let data: any = null
   try {
@@ -24,19 +39,20 @@ async function jsonOrThrow(resp: Response): Promise<any> {
   return data
 }
 
-export function getHealth(): Promise<Health> {
-  return fetch('/api/health').then((r) => r.json())
+export function getHealth(code?: string): Promise<Health> {
+  const h = code !== undefined ? { 'X-Nova-Code': code } : headers()
+  return fetch('/api/health', { headers: h }).then((r) => r.json())
 }
 
 export function listProfiles(): Promise<Profile[]> {
-  return fetch('/api/profiles').then(jsonOrThrow)
+  return fetch('/api/profiles', { headers: headers() }).then(jsonOrThrow)
 }
 
 export async function createProfile(name: string): Promise<Profile> {
   const d = await jsonOrThrow(
     await fetch('/api/profiles', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers() },
       body: JSON.stringify({ name }),
     }),
   )
@@ -63,7 +79,7 @@ export interface StreamPayload {
 export async function* immersiveStream(p: StreamPayload): AsyncGenerator<StreamEvent> {
   const resp = await fetch('/api/immersive/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers() },
     body: JSON.stringify({
       mode: p.mode,
       language: p.language,
@@ -112,7 +128,7 @@ export async function transcribeAudio(blob: Blob, language: string): Promise<str
   form.append('audio', blob, 'audio.webm')
   form.append('expected', '')
   form.append('language', language)
-  const resp = await fetch('/api/audio', { method: 'POST', body: form })
+  const resp = await fetch('/api/audio', { method: 'POST', headers: headers(), body: form })
   const data = await jsonOrThrow(resp)
   return (data as PronunciationScore).transcript || ''
 }
@@ -131,20 +147,20 @@ export async function getTtsBuffer(
   })
   if (voice) params.set('voice', voice)
   if (speed !== 1) params.set('speed', String(speed))
-  const resp = await fetch(`/api/tts?${params.toString()}`)
+  const resp = await fetch(`/api/tts?${params.toString()}`, { headers: headers() })
   if (!resp.ok) return null
   return resp.arrayBuffer()
 }
 
 export function listTtsVoices(lang: string): Promise<TtsVoice[]> {
-  return fetch(`/api/tts/voices?lang=${encodeURIComponent(lang)}`)
+  return fetch(`/api/tts/voices?lang=${encodeURIComponent(lang)}`, { headers: headers() })
     .then(jsonOrThrow)
     .then((d) => d.voices as TtsVoice[])
 }
 
 export function fetchStats(profileId?: number | null): Promise<Stats> {
   const q = profileId ? `?profile_id=${profileId}` : ''
-  return fetch(`/api/stats${q}`).then(jsonOrThrow)
+  return fetch(`/api/stats${q}`, { headers: headers() }).then(jsonOrThrow)
 }
 
 export function ankiUrl(profileId?: number | null): string {
@@ -154,7 +170,7 @@ export function ankiUrl(profileId?: number | null): string {
 export function finishSession(sessionId: number): Promise<void> {
   return fetch('/api/session/finish', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers() },
     body: JSON.stringify({ session_id: sessionId }),
   })
     .then(() => undefined)
@@ -164,7 +180,7 @@ export function finishSession(sessionId: number): Promise<void> {
 export function correctGrammar(text: string, language: string): Promise<GrammarResult> {
   return fetch('/api/grammar', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers() },
     body: JSON.stringify({ text, language }),
   }).then(jsonOrThrow)
 }
@@ -172,7 +188,7 @@ export function correctGrammar(text: string, language: string): Promise<GrammarR
 export function sendLog(msg: string): void {
   fetch('/api/log', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers() },
     body: JSON.stringify({ msg }),
   }).catch(() => {})
 }

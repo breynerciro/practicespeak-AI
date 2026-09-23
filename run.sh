@@ -3,6 +3,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Carga .env (líneas KEY=VALUE) sin pisar variables ya exportadas
+if [ -f .env ]; then
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in ''|\#*) continue ;; esac
+    k="${line%%=*}"; v="${line#*=}"
+    k="$(printf '%s' "$k" | tr -d '[:space:]')"
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+    [ -n "$k" ] && [ -n "$v" ] && [ -z "${!k+x}" ] && export "$k=$v"
+  done < .env
+fi
+
 OLLAMA_BIN="${NOVA_OLLAMA_BIN:-$HOME/.local/bin/ollama}"
 PORT="${NOVA_PORT:-8000}"
 PORT_HTTPS="${NOVA_HTTPS_PORT:-8443}"
@@ -22,7 +34,10 @@ if [ ! -x .venv/bin/uvicorn ]; then
   .venv/bin/pip install -r requirements.txt
 fi
 
-is_ollama() { curl -s "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; }
+LOG_DIR="${NOVA_LOG_DIR:-/tmp/nova}"
+mkdir -p "$LOG_DIR"
+
+is_ollama() { curl -s --max-time 2 "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; }
 is_app() { curl -s "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; }
 
 build_frontend() {
@@ -56,14 +71,64 @@ ts_up() {
     echo "✅ Tailscale: conectado (IP: $(ts_ip))"
   else
     echo "🌐 Primera vez: abre este enlace en el navegador para autorizar:"
-    setsid -f bash -c '"$0" --socket="$1" up --hostname=nova-tutor' "$TS_BIN" "$TS_SOCK" >>/tmp/opencode/tailscaled-up.log 2>&1 &
+    setsid -f bash -c '"$0" --socket="$1" up --hostname=nova-tutor' "$TS_BIN" "$TS_SOCK" >>"$LOG_DIR"/tailscaled-up.log 2>&1 &
     sleep 3
-    grep -oE "https://login\.tailscale\.com/a/[a-f0-9]+" /tmp/opencode/tailscaled-up.log | tail -1
+    grep -oE "https://login\.tailscale\.com/a/[a-f0-9]+" "$LOG_DIR"/tailscaled-up.log 2>/dev/null | tail -1
   fi
 }
 
 lan_ip() {
   ip -4 addr show scope global 2>/dev/null | grep -oP '(?<=inet\s)\d+\.\d+\.\d+\.\d+' | grep -v '^172\.' | head -1
+}
+
+FUNNEL_URL_FILE="$LOG_DIR/funnel_url"
+
+ts_dns_name() {
+  "$TS_BIN" --socket="$TS_SOCK" status --json 2>/dev/null | .venv/bin/python -c '
+import json, sys
+try:
+    print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))
+except Exception:
+    pass' 2>/dev/null
+}
+
+funnel() {
+  # Abre Nova a internet con Tailscale Funnel (HTTPS público, sin abrir
+  # puertos del router). Requiere Tailscale instalado y sesión iniciada.
+  local action="${1:-status}"
+  if ! is_ts; then
+    systemctl --user start tailscaled 2>/dev/null || true
+    sleep 2
+  fi
+  case "$action" in
+    on|start)
+      if ! is_app; then
+        echo "❌ Nova no está corriendo: arranca antes con $0 start" >&2
+        return 1
+      fi
+      echo "🌐 Abriendo Nova a internet con Tailscale Funnel…"
+      if "$TS_BIN" --socket="$TS_SOCK" funnel --bg --https=443 "http://127.0.0.1:$PORT" 2>&1; then
+        local host
+        host="$(ts_dns_name)"
+        if [ -n "$host" ]; then
+          echo "✅ URL pública (compártela con tus amigos): https://$host"
+          mkdir -p "$LOG_DIR"
+          echo "https://$host" > "$FUNNEL_URL_FILE"
+        fi
+      else
+        echo "❌ No se pudo activar el funnel (mira 'tailscale funnel status')."
+      fi
+      ;;
+    off|stop)
+      "$TS_BIN" --socket="$TS_SOCK" funnel off 2>/dev/null || true
+      rm -f "$FUNNEL_URL_FILE"
+      echo "🛑 Funnel cerrado: tu URL pública ya no responde."
+      ;;
+    *)
+      "$TS_BIN" --socket="$TS_SOCK" funnel status 2>&1 || echo "Funnel inactivo."
+      [ -f "$FUNNEL_URL_FILE" ] && echo "🌍 URL pública: $(cat "$FUNNEL_URL_FILE")"
+      ;;
+  esac
 }
 
 show_url() {
@@ -82,6 +147,9 @@ show_url() {
       echo "🌐 Por Tailscale: http://${tip}:${PORT}"
       url="http://${tip}:${PORT}"
     fi
+  fi
+  if [ -f "$FUNNEL_URL_FILE" ]; then
+    echo "🌍 URL pública (fuera de casa): $(cat "$FUNNEL_URL_FILE")"
   fi
   if [ -x .venv/bin/python ]; then
     if .venv/bin/python -c "import qrcode" >/dev/null 2>&1; then
@@ -106,10 +174,20 @@ start() {
   if is_ollama; then
     echo "✅ Ollama ya estaba corriendo"
   elif [ -x "$OLLAMA_BIN" ]; then
-    nohup env OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=30m "$OLLAMA_BIN" serve >>"${NOVA_LOG_DIR:-/tmp/nova}"/ollama.log 2>&1 &
+    nohup env OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=30m "$OLLAMA_BIN" serve >>"$LOG_DIR"/ollama.log 2>&1 &
     echo "🚀 Ollama iniciado"
   else
     echo "❌ No encuentro ollama en $OLLAMA_BIN" >&2
+    return 1
+  fi
+
+  # Arranque en frío: espera (máx 30 s) a que Ollama acepte conexiones
+  for _ in $(seq 1 30); do
+    is_ollama && break
+    sleep 1
+  done
+  if ! is_ollama; then
+    echo "❌ Ollama no responde (mira $LOG_DIR/ollama.log)" >&2
     return 1
   fi
 
@@ -121,7 +199,7 @@ start() {
   if is_app; then
     echo "✅ Nova ya estaba corriendo"
   else
-    nohup .venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port "$PORT" >>/tmp/opencode/tutor.log 2>&1 &
+    nohup .venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port "$PORT" >>"$LOG_DIR"/tutor.log 2>&1 &
     echo "🚀 Nova iniciado (http)"
   fi
 
@@ -137,13 +215,16 @@ start() {
     fi
     nohup .venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port "$PORT_HTTPS" \
       --ssl-certfile "$scrt" --ssl-keyfile "$skey" \
-      >>/tmp/opencode/tutor.log 2>&1 &
+      >>"$LOG_DIR"/tutor.log 2>&1 &
     echo "🚀 Nova iniciado (https :$PORT_HTTPS con $(basename "$scrt"))"
   fi
 
   ts_up
   show_url
   echo "   O localmente: http://127.0.0.1:$PORT"
+  case "${NOVA_FUNNEL:-}" in
+    on|1|true) funnel on ;;
+  esac
 }
 
 stop() {
@@ -173,5 +254,6 @@ case "${1:-start}" in
   stop) stop ;;
   restart) stop; sleep 2; start ;;
   status) status ;;
-  *) echo "Uso: $0 {start|stop|restart|status}"; exit 1 ;;
+  funnel) funnel "${2:-status}" ;;
+  *) echo "Uso: $0 {start|stop|restart|status|funnel [on|off|status]}"; exit 1 ;;
 esac

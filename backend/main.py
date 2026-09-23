@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 
 from . import config, db
+from .access import STREAM_GATE, check_access_code, check_rate_limit
 from .ai import (
     NovaError,
     check_ollama,
@@ -57,7 +58,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.middleware("http")
 async def redirect_hostname_https(request, call_next):
     host = (request.headers.get("host") or "").lower()
-    if config.PUBLIC_HOSTNAME and request.url.scheme != "https" and host.startswith(config.PUBLIC_HOSTNAME.lower()):
+    # Detrás del proxy de Tailscale Funnel la petición llega por HTTP interno
+    # pero el visitante ya está en HTTPS: no redirigir en ese caso.
+    forwarded = (request.headers.get("x-forwarded-proto") or "").lower()
+    if (
+        config.PUBLIC_HOSTNAME
+        and request.url.scheme != "https"
+        and forwarded != "https"
+        and host.startswith(config.PUBLIC_HOSTNAME.lower())
+    ):
         url = f"https://{host}:{config.HTTPS_PORT}{request.url.path}"
         if request.url.query:
             url += "?" + request.url.query
@@ -82,6 +91,18 @@ async def log_requests(request, call_next):
     path = request.url.path
     if path.startswith("/api/") and path not in ("/api/health", "/api/logs"):
         log_info(f"REQ {request.client.host} {request.method} {path} len={request.headers.get('content-length', '-')}")
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def access_code_guard(request, call_next):
+    """Puerta compartida: exige el código (cabecera X-Nova-Code o ?code=) en
+    /api salvo /api/health. El estático y el service worker quedan abiertos
+    para que el navegador pueda cargar la pantalla que pide el código."""
+    path = request.url.path
+    if path.startswith("/api") and not check_access_code(request):
+        headers = {"WWW-Authenticate": "Nova-Code"} if path.startswith("/api/") else None
+        return JSONResponse({"detail": "Código de acceso incorrecto."}, status_code=401, headers=headers)
     return await call_next(request)
 
 
@@ -144,6 +165,8 @@ async def health():
             "whisper": config.WHISPER_MODEL_SIZE,
             "ok": ollama_up,
             "public_hostname": config.PUBLIC_HOSTNAME,
+            "https_port": config.HTTPS_PORT,
+            "needs_code": bool(config.ACCESS_CODE),
         }
     )
 
@@ -164,7 +187,9 @@ async def create_profile(payload: ProfileCreate):
 
 
 @app.post("/api/chat")
-async def chat(payload: ChatRequest):
+async def chat(payload: ChatRequest, request: Request):
+    if not check_rate_limit(request):
+        raise HTTPException(status_code=429, detail="Demasiadas peticiones. Espera un minuto.")
     try:
         result = await tutor_chat(payload.language, [h.model_dump() for h in payload.history], payload.message)
     except NovaError as exc:
@@ -217,7 +242,14 @@ async def immersive_stream(payload: ImmersiveRequest):
     """Nova responde en streaming (SSE) con el mismo contrato que
     `/api/immersive`, pero entregando cada fragmento mientras se genera:
     `session_id` (solo start), `topic`, `delta`*, `corrections`? y `done`;
-    ante un fallo de Ollama se envía un evento `error`."""
+    ante un fallo de Ollama se envía un evento `error`. Un semáforo limita
+    las conversaciones simultáneas para no saturar la CPU compartida."""
+
+    if not STREAM_GATE.enter():
+        return JSONResponse(
+            {"detail": "Nova está ocupada con otras conversaciones. Prueba en unos segundos."},
+            status_code=503,
+        )
 
     async def events():
         try:
@@ -269,6 +301,8 @@ async def immersive_stream(payload: ImmersiveRequest):
             yield _sse({"type": "error", "detail": f"Modelo local no disponible. {exc}"})
         except ValueError as exc:
             yield _sse({"type": "error", "detail": f"Nova dio una respuesta inválida. {exc}"})
+        finally:
+            STREAM_GATE.leave()
 
     return StreamingResponse(
         events(),
@@ -282,7 +316,9 @@ async def immersive_stream(payload: ImmersiveRequest):
 
 
 @app.post("/api/grammar")
-async def grammar(payload: GrammarRequest):
+async def grammar(payload: GrammarRequest, request: Request):
+    if not check_rate_limit(request):
+        raise HTTPException(status_code=429, detail="Demasiadas peticiones. Espera un minuto.")
     try:
         result = await correct_grammar(payload.language, payload.text)
     except NovaError as exc:
@@ -294,10 +330,13 @@ async def grammar(payload: GrammarRequest):
 
 @app.post("/api/audio")
 async def audio(
+    request: Request,
     audio: UploadFile = File(...),
     expected: str = Form(""),
     language: str = Form("en"),
 ):
+    if not check_rate_limit(request):
+        raise HTTPException(status_code=429, detail="Demasiadas peticiones. Espera un minuto.")
     content = await audio.read()
     log_info(f"AUDIO recibido lang={language} bytes={len(content)} expected={expected!r}")
     try:
@@ -347,7 +386,9 @@ async def tts_voices(lang: str = ""):
 
 
 @app.get("/api/tts")
-async def tts(text: str, lang: str = "en", gender: str = "female", voice: str = "", speed: float = 1.0):
+async def tts(request: Request, text: str, lang: str = "en", gender: str = "female", voice: str = "", speed: float = 1.0):
+    if not check_rate_limit(request):
+        raise HTTPException(status_code=429, detail="Demasiadas peticiones. Espera un minuto.")
     log_info(f"TTS lang={lang} gender={gender} voice={voice or '-'} speed={speed:g} texto={text!r}")
     try:
         data = await sintetizar(text, lang, gender, voice, speed)

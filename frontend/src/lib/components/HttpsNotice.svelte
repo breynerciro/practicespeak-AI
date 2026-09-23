@@ -10,7 +10,8 @@
     getHealth()
       .then((h) => {
         if (h.public_hostname) {
-          href = 'https://' + h.public_hostname + ':8443'
+          const port = h.https_port && h.https_port !== 443 ? ':' + h.https_port : ''
+          href = 'https://' + h.public_hostname + port
           show = true
         }
       })

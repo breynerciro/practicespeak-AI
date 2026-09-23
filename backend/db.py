@@ -4,6 +4,8 @@ Usa la stdlib (sqlite3, sin ORM) para cero dependencias extra. El hilo de
 Whisper y los endpoints async comparten una conexión por proceso con
 check_same_thread=False + un lock, suficiente para uso personal.
 """
+import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -11,7 +13,13 @@ from pathlib import Path
 
 from . import config
 
-DB_PATH = Path(config.LOG_DIR).parent / "nova.db"
+# Base SQLite en el directorio de datos persistente (~/.local/share/nova por
+# defecto): NO en /tmp, para que las sesiones y correcciones de las personas
+# no desaparezcan al reiniciar el servidor. Se respeta NOVA_DB_PATH para
+# desplegables (Docker) y para los tests.
+DB_PATH = Path(
+    os.environ.get("NOVA_DB_PATH") or os.path.join(config.DATA_DIR, "nova.db")
+)
 _conn: sqlite3.Connection | None = None
 _lock = threading.Lock()
 
@@ -46,9 +54,30 @@ CREATE TABLE IF NOT EXISTS corrections (
 """
 
 
+_migration_done = False
+
+
+def _migrate_legacy_db() -> None:
+    """Instalaciones antiguas guardaban la base en /tmp: si existe y la nueva
+    ubicación aún no tiene datos, se copia para no perder sesiones."""
+    global _migration_done
+    if _migration_done:
+        return
+    _migration_done = True
+    legacy = Path("/tmp/nova.db")
+    if DB_PATH.exists() or not legacy.is_file() or legacy.resolve() == DB_PATH.resolve():
+        return
+    try:
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, DB_PATH)
+    except OSError:
+        pass
+
+
 def _get_conn() -> sqlite3.Connection:
     global _conn
     if _conn is None:
+        _migrate_legacy_db()
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
@@ -203,7 +232,8 @@ def export_anki_csv(profile_id: int | None = None) -> str:
 
 def reset_for_tests(db_path: Path) -> None:
     """Solo para tests: apunta a otra base y resetea la conexión."""
-    global _conn, DB_PATH
+    global _conn, DB_PATH, _migration_done
+    _migration_done = True  # nunca copiar la base real en las de prueba
     DB_PATH = db_path
     if _conn is not None:
         _conn.close()

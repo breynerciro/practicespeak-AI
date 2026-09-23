@@ -1,9 +1,11 @@
 <script lang="ts">
   import { ankiUrl, fetchStats, sendLog } from './lib/api'
+  import { access } from './lib/access.svelte'
   import { profileStore } from './lib/profile.svelte'
   import { session } from './lib/session.svelte'
   import { settings } from './lib/settings.svelte'
   import { toast } from './lib/toast.svelte'
+  import AccessGate from './lib/components/AccessGate.svelte'
   import Composer from './lib/components/Composer.svelte'
   import CorrectionPanel from './lib/components/CorrectionPanel.svelte'
   import GrammarPanel from './lib/components/GrammarPanel.svelte'
@@ -127,6 +129,10 @@
   />
 {/if}
 
-{#if profileStore.gateOpen}
+{#if profileStore.gateOpen && !access.gateOpen}
   <ProfileGate />
+{/if}
+
+{#if access.gateOpen}
+  <AccessGate />
 {/if}

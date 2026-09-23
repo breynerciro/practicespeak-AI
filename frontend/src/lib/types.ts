@@ -55,6 +55,10 @@ export interface Health {
   whisper: string
   ok: boolean
   public_hostname: string
+  /** Puerto HTTPS público anunciado (p. ej. 443 con Tailscale Funnel). */
+  https_port?: number
+  /** true si el servidor exige código de acceso compartido. */
+  needs_code?: boolean
 }
 
 export interface Voice {
