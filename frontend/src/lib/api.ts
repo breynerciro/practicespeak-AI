@@ -4,6 +4,7 @@ import type {
   GrammarResult,
   Health,
   Profile,
+  PronunciationCoach,
   PronunciationScore,
   Stats,
   StreamEvent,
@@ -123,14 +124,27 @@ export async function* immersiveStream(p: StreamPayload): AsyncGenerator<StreamE
   }
 }
 
-export async function transcribeAudio(blob: Blob, language: string): Promise<string> {
+/** Transcribe voz y devuelve además la confianza del ASR y el score si hubo `expected`. */
+export async function transcribeAudioDetailed(blob: Blob, language: string): Promise<PronunciationScore> {
   const form = new FormData()
   form.append('audio', blob, 'audio.webm')
   form.append('expected', '')
   form.append('language', language)
   const resp = await fetch('/api/audio', { method: 'POST', headers: headers(), body: form })
-  const data = await jsonOrThrow(resp)
-  return (data as PronunciationScore).transcript || ''
+  return (await jsonOrThrow(resp)) as PronunciationScore
+}
+
+export async function transcribeAudio(blob: Blob, language: string): Promise<string> {
+  return (await transcribeAudioDetailed(blob, language)).transcript || ''
+}
+
+/** Entrenador: adivina qué quiso decir el estudiante y da un tip de la palabra. */
+export function analyzePronunciation(transcript: string, language: string): Promise<PronunciationCoach> {
+  return fetch('/api/pronunciation/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers() },
+    body: JSON.stringify({ transcript, language }),
+  }).then(jsonOrThrow)
 }
 
 export async function getTtsBuffer(

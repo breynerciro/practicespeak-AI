@@ -397,3 +397,41 @@ class TestResolveModel:
         monkeypatch.setattr(ai.httpx, "AsyncClient", lambda *a, **k: client)
         monkeypatch.setattr(ai, "MODEL", "nova-mini")
         assert run(ai.resolve_model()) == "nova-mini"
+
+
+class TestPronunciationCoach:
+    """El coach repara la frase, aísla la palabra y da un tip fonético."""
+
+    def test_guesses_word_and_tip(self, monkeypatch):
+        async def fake_ask(messages):
+            return json.dumps(
+                {
+                    "guessed": "Você já pensou em atrações diferentes?",
+                    "target_word": "atrações",
+                    "tip": "la 'çõe' es nasal, como 'son' en portugués",
+                }
+            )
+
+        monkeypatch.setattr(ai, "ask_ollama", fake_ask)
+        result = run(ai.pronunciation_coach("Você já pensou em atraçõis diferentes?", "pt"))
+        assert result["target_word"] == "atrações"
+        assert "atrações" in result["guessed"]
+        assert result["tip"]
+
+    def test_transcript_fine_returns_empty_target(self, monkeypatch):
+        async def fake_ask(messages):
+            return json.dumps({"guessed": "Hello how are you", "target_word": "", "tip": ""})
+
+        monkeypatch.setattr(ai, "ask_ollama", fake_ask)
+        result = run(ai.pronunciation_coach("Hello how are you", "en"))
+        assert result["guessed"] == "Hello how are you"
+        assert result["target_word"] == ""
+
+    def test_llm_failure_falls_back_to_transcript(self, monkeypatch):
+        async def boom(messages):
+            raise ai.NovaError("down")
+
+        monkeypatch.setattr(ai, "ask_ollama", boom)
+        result = run(ai.pronunciation_coach("hola que tal", "es"))
+        assert result["guessed"] == "hola que tal"
+        assert result["target_word"] == ""

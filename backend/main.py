@@ -17,12 +17,13 @@ from .ai import (
     immersive_chat_stream,
     immersive_continue,
     immersive_start,
+    pronunciation_coach,
     resolve_start_topic,
     tutor_chat,
 )
 from .log import LOG_BUF, log_info
 from .schemas import ChatRequest, GrammarRequest, ImmersiveRequest, ProfileCreate
-from .speech import evaluate, transcribe
+from .speech import evaluate, transcribe_detailed
 from .tts import sintetizar
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -345,18 +346,37 @@ async def audio(
     try:
         # Whisper en CPU es bloqueante: se ejecuta en un threadpool para no
         # congelar el event loop ni bloquear otras peticiones.
-        transcript = await run_in_threadpool(transcribe, content, language)
+        transcript, confidence = await run_in_threadpool(transcribe_detailed, content, language)
     except Exception as exc:
         log_info(f"TRANSCRIBE_ERR {exc}")
         raise HTTPException(status_code=500, detail="Error transcribiendo el audio.") from exc
-    log_info(f"TRANSCRIPCIÓN ({language}): {transcript!r}")
+    log_info(f"TRANSCRIPCIÓN ({language}): {transcript!r} conf={confidence}")
     result = evaluate(expected, transcript, language)
+    result["confidence"] = confidence
+    result["expected"] = expected
     return JSONResponse(result)
 
 
 @app.get("/api/stats")
 async def stats_endpoint(profile_id: int | None = None):
     return JSONResponse(await run_in_threadpool(db.stats, profile_id))
+
+
+@app.post("/api/pronunciation/analyze")
+async def pronunciation_analyze(payload: dict, request: Request):
+    """Entrenador de pronunciación: dado lo que Whisper entendió, adivina qué
+    quiso decir el estudiante (reparación mínima) y da un tip fonético de la
+    palabra clave mal pronunciada. Lo invoca el frontend cuando la confianza
+    de la transcripción es baja, ANTES de continuar la conversación."""
+    if not check_rate_limit(request):
+        raise HTTPException(status_code=429, detail="Demasiadas peticiones. Espera un minuto.")
+    transcript = str(payload.get("transcript", "")).strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Falta el transcript.")
+    language = str(payload.get("language", "en"))
+    result = await pronunciation_coach(transcript, language)
+    log_info(f"PRON_ANALYZE '{transcript[:40]}' -> '{result['guessed'][:40]}' target={result['target_word']!r}")
+    return JSONResponse(result)
 
 
 @app.get("/api/export/anki")

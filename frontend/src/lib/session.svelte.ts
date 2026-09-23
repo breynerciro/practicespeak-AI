@@ -1,12 +1,13 @@
 // Controlador de la conversación con PracticeSpeak: un único objeto reactivo que
 // coordina texto, voz (VAD), TTS, histórico y correcciones.
 import {
+  analyzePronunciation,
   finishSession,
   getTtsBuffer,
   immersiveStream,
   sendLog,
   stripCorrections,
-  transcribeAudio,
+  transcribeAudioDetailed,
 } from './api'
 import { micRecorder } from './audio/recorder'
 import { playBuffer, stopPlayback, unlockAudio } from './audio/playback'
@@ -16,7 +17,7 @@ import { profileStore } from './profile.svelte'
 import { settings } from './settings.svelte'
 import { extractCompleted } from './speech'
 import { toast } from './toast.svelte'
-import type { Correction, Turn } from './types'
+import type { Correction, PronunciationCoach, Turn } from './types'
 
 export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking'
 
@@ -59,6 +60,16 @@ class SessionStore {
   private bargeProcessing = false
   /** Generación del habla actual: la invalida un barge y cada respuesta nueva. */
   private speechGen = 0
+
+  // -------------------------------------------------- entrenador de pronunciación
+  /** Activo mientras se corrige una palabra: modela, escucha 2 intentos. */
+  coachActive = $state(false)
+  /** La palabra a practicar (en el idioma meta). */
+  coachWord = $state('')
+  /** Intentos restantes antes de seguir la conversación. */
+  coachAttemptsLeft = $state(0)
+  /** Frase reparada que el coach adivinó (para el turno del estudiante). */
+  private coachGuessed = ''
 
   // ---------------------------------------------------------------- helpers
   resetStream() {
@@ -264,26 +275,156 @@ class SessionStore {
       this.retryListen()
       return
     }
+    // Un intento del entrenador va directo a validar la palabra, no al tutor.
+    if (this.coachActive) {
+      await this.coachEvaluateAttempt(blob)
+      return
+    }
     this.orb = 'thinking'
     this.status = 'Procesando tu respuesta…'
     let transcript = ''
+    let confidence: number | null = null
     try {
       sendLog('AUDIO_POST bytes=' + blob.size)
-      transcript = await transcribeAudio(blob, settings.lang)
+      const detail = await transcribeAudioDetailed(blob, settings.lang)
+      transcript = detail.transcript || ''
+      confidence = detail.confidence ?? null
     } catch (e) {
       sendLog('TRANSCRIBE_ERR ' + (e instanceof Error ? e.message : String(e)))
       this.orb = 'idle'
       this.status = 'Error transcribiendo. Intenta de nuevo.'
       return
     }
-    sendLog('TRANSCRIPT ' + JSON.stringify(transcript.slice(0, 40)))
+    sendLog('TRANSCRIPT ' + JSON.stringify(transcript.slice(0, 40)) + ' conf=' + confidence)
     if (!transcript) {
       this.status = 'No te entendí. Intenta de nuevo…'
       this.retryListen()
       return
     }
+    // Confianza baja del ASR = probablemente pronunció mal: entra el entrenador
+    // en vez de mandarle al tutor algo que no es lo que quisiste decir.
+    if (confidence !== null && confidence < 0.55) {
+      await this.startCoach(transcript)
+      return
+    }
     this.addTurn('user', transcript)
     await this.continueTurn(transcript, 'voice')
+  }
+
+  /** Modo entrenador: adivina la palabra, la corrige por voz y pide 2 intentos. */
+  private async startCoach(badTranscript: string) {
+    this.orb = 'thinking'
+    this.status = 'Déjame adivinar lo que quisiste decir…'
+    sendLog('COACH_START')
+    let coach: PronunciationCoach = { guessed: badTranscript, target_word: '', tip: '' }
+    try {
+      coach = await analyzePronunciation(badTranscript, settings.lang)
+    } catch {
+      // Sin coach (p. ej. LLM ocupado): continúa la conversación normal.
+    }
+    const word = coach.target_word.trim()
+    if (!word) {
+      // No hay palabra clara que practicar: usa lo adivinado y sigue.
+      this.addTurn('user', coach.guessed)
+      await this.continueTurn(coach.guessed, 'voice')
+      return
+    }
+    this.coachActive = true
+    this.coachWord = word
+    this.coachAttemptsLeft = 2
+    this.coachGuessed = coach.guessed
+    // Corrección por voz: lo que entendí, lo que quiso decir, tip y modelar.
+    const msg =
+      `Creo que quisiste decir "${coach.guessed}", ¿verdad? ` +
+      (coach.tip ? coach.tip + ' ' : '') +
+      `Escucha: "${word}". ` +
+      `Ahora repite tú: "${word}". Te escucho — tienes 2 intentos.`
+    this.addTurn('assistant', msg)
+    await this.speakNow(msg)
+    // Al terminar de modelar la palabra, escucha el intento 1.
+    this.startListening()
+  }
+
+  /** Valida un intento del estudiante durante el entrenador. */
+  private async coachEvaluateAttempt(blob: Blob) {
+    this.busy = true
+    this.orb = 'thinking'
+    this.status = 'Escuchando tu intento…'
+    let transcript = ''
+    let confidence: number | null = null
+    try {
+      const detail = await transcribeAudioDetailed(blob, settings.lang)
+      transcript = detail.transcript || ''
+      confidence = detail.confidence ?? null
+    } catch {
+      transcript = ''
+    }
+    const word = this.coachWord
+    // Error de red al transcribir: no consume intento, vuelve a escuchar.
+    if (!transcript && confidence === null) {
+      this.busy = false
+      this.startListening()
+      return
+    }
+    const norm = (s: string) =>
+      s
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s']/gu, ' ')
+        .trim()
+    const said = norm(transcript)
+    const target = norm(word)
+    const hit =
+      said.includes(target) ||
+      (target.length > 6 && said.split(/\s+/).some((w) => w.startsWith(target.slice(0, Math.ceil(target.length * 0.7)))))
+    const ok = hit && (confidence === null || confidence >= 0.55)
+    sendLog(`COACH_ATTEMPT left=${this.coachAttemptsLeft} ok=${ok} said='${said.slice(0, 30)}'`)
+    if (ok) {
+      // ¡Logrado! Vuelve la conversación normal con lo que quiso decir.
+      const praise = this.coachAttemptsLeft === 2 ? '¡Eso es! ' : '¡Muy bien! '
+      this.coachActive = false
+      this.coachWord = ''
+      this.coachAttemptsLeft = 0
+      const turn = this.coachGuessed ? `(${this.coachGuessed}) ` : ''
+      this.addTurn('user', turn)
+      await this.speakNow(praise + 'Sigamos.')
+      await this.continueTurn(turn, 'voice')
+      return
+    }
+    this.coachAttemptsLeft -= 1
+    if (this.coachAttemptsLeft > 0) {
+      await this.speakNow(`Casi. Escucha otra vez: "${word}". Último intento, dilo tú.`)
+      this.busy = false
+      this.startListening()
+      return
+    }
+    // Sin intentos: sigue la conversación con la frase adivinada.
+    const guessed = this.coachGuessed
+    this.coachActive = false
+    this.coachWord = ''
+    this.coachAttemptsLeft = 0
+    await this.speakNow('¡Tranquilo, esa palabra es difícil! La seguiremos practicando. Sigo contigo.')
+    this.addTurn('user', guessed ? `(${guessed}) ` : '')
+    await this.continueTurn(guessed, 'voice')
+  }
+
+  /** Habla un texto YA decidido (correcciones del entrenador) y espera el final. */
+  private async speakNow(text: string) {
+    const gen = ++this.speechGen
+    this.spokenChars = 0
+    this.streamFinished = true
+    this.speechFailed = false
+    this.speechQueue = [text]
+    this.busy = true
+    this.orb = 'speaking'
+    this.status = ''
+    await new Promise<void>((resolve) => {
+      const job = this.drain(false).finally(() => {
+        if (this.drainJob === job) this.drainJob = null
+        resolve()
+      })
+      this.drainJob = job
+    })
+    this.busy = false
   }
 
   private async continueTurn(text: string, origin: 'text' | 'voice') {
@@ -375,18 +516,18 @@ class SessionStore {
     })
   }
 
-  private async drain() {
+  private async drain(standalone = false) {
     // La reproducción anterior se corta una sola vez al entrar (p. ej. al
     // interrumpir); dentro del bucle NUNCA se corta: playBuffer resuelve
     // cuando el audio EMPIEZA, no cuando termina.
     stopPlayback()
-    while (this.running) {
+    while (this.running || standalone) {
       // Cola vacía con stream aún abierto: ESPERAR a que lleguen frases
       // (antes el bucle salía y el tramo final nunca se sintetizaba).
-      while (this.running && !this.speechQueue.length && !this.streamFinished) {
+      while ((this.running || standalone) && !this.speechQueue.length && !this.streamFinished) {
         await new Promise<void>((wake) => (this.queueWake = wake)).finally(() => (this.queueWake = null))
       }
-      if (!this.running || (this.speechFailed && !this.speechQueue.length)) break
+      if (!(this.running || standalone) || (this.speechFailed && !this.speechQueue.length)) break
       if (!this.speechQueue.length) break
       if (!this.bargeOn && !this.bargeInFired) this.startBarge()
       const gen = this.speechGen
@@ -418,9 +559,13 @@ class SessionStore {
     if (this.streamFinished) {
       this.speechQueue = []
       this.speaking = false
-      if (!this.running) return
+      if (!this.running && !standalone) return
       if (this.bargeInFired || this.bargeProcessing) return
       this.stopBarge()
+      if (standalone) {
+        // Habla del entrenador: la escucha siguiente la gestiona quien llamó.
+        return
+      }
       if (this.speechFailed) {
         this.speechFailed = false
         sendLog('TTS_FALLO')
@@ -428,6 +573,10 @@ class SessionStore {
         this.setTranscriptOpen(true)
         this.status = 'Sin voz (¿internet?). Tu respuesta está arriba — toca el orbe para responder.'
         this.startListeningWithDelay()
+      } else if (this.coachActive) {
+        // Respuesta normal del tutor terminada con coach activo no ocurre;
+        // la escucha ya la lanza quien activó el coach. Nada que hacer.
+        this.orb = 'idle'
       } else {
         this.orb = 'idle'
         this.startListening()

@@ -203,12 +203,12 @@ class TestLogsAndClientLog:
 
 @pytest.fixture()
 def fake_transcribe(monkeypatch):
-    """Reemplaza transcribe (sync, como el real: main la pasa por threadpool)."""
+    """Reemplaza transcribe_detailed (sync, como el real: main la pasa por threadpool)."""
     def fake(audio_bytes, language):
         assert audio_bytes == b"AUDIOBYTES"
-        return "hello world"
+        return "hello world", 0.92
 
-    monkeypatch.setattr("backend.main.transcribe", fake)
+    monkeypatch.setattr("backend.main.transcribe_detailed", fake)
 
 
 @pytest.fixture()
@@ -232,12 +232,14 @@ class TestAudio:
         assert body["score"] == 100
         assert body["transcript"] == "hello world"
         assert body["missing"] == []
+        assert body["confidence"] == 0.92
+        assert body["expected"] == "hello world"
 
     def test_transcribe_error_returns_500(self, client, monkeypatch):
         def boom(audio_bytes, language):
             raise RuntimeError("whisper exploded")
 
-        monkeypatch.setattr("backend.main.transcribe", boom)
+        monkeypatch.setattr("backend.main.transcribe_detailed", boom)
         resp = client.post(
             "/api/audio",
             files={"audio": ("a.webm", b"AUDIOBYTES", "audio/webm")},
@@ -245,6 +247,35 @@ class TestAudio:
         )
         assert resp.status_code == 500
         assert "transcribiendo" in resp.json()["detail"]
+
+
+class TestPronunciationCoach:
+    """Entrenador: adivina la palabra mal pronunciada y da un tip."""
+
+    def test_analyze_returns_guess_word_and_tip(self, client, monkeypatch):
+        async def fake_coach(transcript, language):
+            return {
+                "guessed": "Eu quero ir às atrações",
+                "target_word": "atrações",
+                "tip": "la 'çõe' suena como 'soin' nasal",
+            }
+
+        monkeypatch.setattr("backend.main.pronunciation_coach", fake_coach)
+        resp = client.post("/api/pronunciation/analyze", json={"transcript": "eu quero ir as atracoes", "language": "pt"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["target_word"] == "atrações"
+        assert "atrações" in body["guessed"]
+        assert body["tip"]
+
+    def test_analyze_requires_transcript(self, client):
+        assert client.post("/api/pronunciation/analyze", json={"transcript": "", "language": "en"}).status_code == 400
+
+    def test_analyze_blocked_without_access_code(self, client, monkeypatch):
+        from backend import config
+
+        monkeypatch.setattr(config, "ACCESS_CODE", "Secreto")
+        assert client.post("/api/pronunciation/analyze", json={"transcript": "hola"}).status_code == 401
 
 
 class TestTTS:

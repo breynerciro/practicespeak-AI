@@ -32,6 +32,20 @@ export interface PronunciationScore {
   transcript: string
   feedback: string[]
   missing: string[]
+  /** Confianza del ASR (0-1); null si Whisper no la reportó. */
+  confidence?: number | null
+  /** Texto esperado (modo tarjetas); vacío en conversación libre. */
+  expected?: string
+}
+
+/** Resultado del entrenador de pronunciación (adivina la palabra mal dicha). */
+export interface PronunciationCoach {
+  /** Frase reparada: lo que el estudiante quiso decir. */
+  guessed: string
+  /** La palabra/frase cuya pronunciación falló (para practicarla). */
+  target_word: string
+  /** Tip fonético corto en español. */
+  tip: string
 }
 
 export interface Profile {

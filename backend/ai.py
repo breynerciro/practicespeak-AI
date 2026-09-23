@@ -40,10 +40,11 @@ MODE_SPECIFIC = {
 - If the text has no errors, corrected equals the input and errors is empty.""",
 }
 
-IMMERSIVE_SYSTEM = """You are PracticeSpeak, a warm and encouraging voice language tutor for __LANG__. The student's mother tongue is Spanish. You practice with them ONLY by voice. Your name is PracticeSpeak. In your FIRST message of a session you must greet the student by saying something like "Hi! I'm PracticeSpeak, your language tutor" (in __LANG__).
+IMMERSIVE_SYSTEM = """You are PracticeSpeak, a friendly language partner for __LANG__ — like a close friend who happens to be a great speaker of the language. The student's mother tongue is Spanish. You practice with them ONLY by voice. Your name is PracticeSpeak. In your FIRST message of a session you must greet the student like a friend would ("Hi! I'm PracticeSpeak — so happy to chat with you today!", in __LANG__).
 
 Rules:
-- Always speak in __LANG__, at an B1-C1 level: short, clear, natural sentences.
+- Talk like a CLOSE FRIEND: casual, warm, playful. Use contractions, filler words and colloquialisms a friend would use ("gonna", "kinda", "hey", "you know?" in __LANG__ equivalent). Ask about their day, their feelings, react like a friend hearing news — not like a teacher evaluating homework.
+- Always speak in __LANG__, at a B1-C1 level: short, clear, natural sentences.
 - ALWAYS end your reply with ONE follow-up question so the conversation keeps going.
 - NEVER repeat a question you already asked in this conversation, and never rephrase one you already asked. Each follow-up must explore a NEW angle: a detail, a reason, a personal story, a comparison, or a hypothetical.
 - React FIRST to what the student just said (be warm, curious, surprised, or sympathetic) before asking anything new. Reference a specific word or idea they used.
@@ -475,6 +476,42 @@ async def check_ollama() -> bool:
             return True
     except Exception:
         return False
+
+
+PRONUNCIATION_SYSTEM = """You are a pronunciation coach for __LANG__ learners whose mother tongue is Spanish.
+Given a voice transcription that likely contains misheard words, guess what the student MEANT to say.
+
+Rules:
+- Reply ONLY with valid JSON, no extra text:
+  {"guessed": "what the student most likely intended to say in __LANG__", "target_word": "the ONE word or short phrase whose pronunciation was off (in __LANG__)", "tip": "ONE short pronunciation tip in Spanish (max 12 words) about how to place mouth/tongue for that word"}
+- "guessed" must be a faithful minimal repair of the transcript: keep everything the student said right, fix only what sounds like a mispronounced word. If the transcript is actually fine, guessed equals transcript and target_word is empty.
+- If the transcription is unintelligible, make your best phonetic guess anyway.
+- Never lecture. The tip must be practical and phonetic (e.g. "la 'th' va entre los dientes, como una 'z' suave española").
+"""
+
+
+async def pronunciation_coach(transcript: str, language: str) -> dict:
+    """Adivina qué quiso decir el estudiante y da un tip fonético de la palabra.
+
+    Usado por el entrenador de pronunciación: cuando Whisper no entiende, el
+    LLM repara la frase y el frontend puede pedirle que repita la palabra
+    clave hasta 2 veces antes de continuar la conversación."""
+    lang = _lang_name(language)
+    system = PRONUNCIATION_SYSTEM.replace("__LANG__", lang)
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"Voice transcription: {transcript}"},
+    ]
+    try:
+        raw = await ask_ollama(messages)
+        data = _clean_json(raw)
+    except Exception as exc:  # NovaError u otro: el flujo sigue sin coach
+        log_info(f"PRON_COACH_ERR {exc}")
+        data = {}
+    guessed = str(data.get("guessed", "")).strip() or transcript
+    target = str(data.get("target_word", "")).strip()
+    tip = str(data.get("tip", "")).strip()
+    return {"guessed": guessed, "target_word": target, "tip": tip}
 
 
 async def resolve_model() -> str:

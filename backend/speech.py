@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import tempfile
@@ -25,13 +26,33 @@ def _normalize(text: str) -> str:
 
 
 def transcribe(audio_bytes: bytes, language: str) -> str:
+    """Solo texto: compatibilidad con usos existentes (tests, usos futuros)."""
+    text, _conf = transcribe_detailed(audio_bytes, language)
+    return text
+
+
+def transcribe_detailed(audio_bytes: bytes, language: str) -> tuple[str, float | None]:
+    """Transcribe con Whisper y devuelve (texto, confianza 0-1 o None).
+
+    La confianza se calcula con el logprob medio de los segmentos; la usa el
+    entrenador de pronunciación para decidir si intentar adivinar qué quiso
+    decir el estudiante (baja confianza = pronunció mal y Whisper inventó)."""
     model = _get_model()
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
         tmp.write(audio_bytes)
         tmp_path = tmp.name
     try:
         segments, _info = model.transcribe(tmp_path, language=language, beam_size=config.WHISPER_BEAM)
-        return " ".join(s.text.strip() for s in segments).strip()
+        texts: list[str] = []
+        logprobs: list[float] = []
+        for s in segments:
+            texts.append(s.text.strip())
+            logprob = getattr(s, "avg_logprob", None)
+            if logprob is not None:
+                logprobs.append(logprob)
+        text = " ".join(texts).strip()
+        conf = None if not logprobs else round(math.exp(sum(logprobs) / len(logprobs)), 3)
+        return text, conf
     finally:
         os.unlink(tmp_path)
 
