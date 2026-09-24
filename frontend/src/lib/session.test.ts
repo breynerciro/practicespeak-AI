@@ -200,7 +200,7 @@ function voiceBefore() {
 describe('session (modo voz: TTS por frases)', () => {
   beforeEach(voiceBefore)
 
-  it('habla la primera frase en cuanto se completa en el stream', async () => {
+  it('habla la respuesta completa tras recibir el `done` del stream', async () => {
     await session.start()
     const spoken = mocks.getTtsBuffer.mock.calls.map((c) => c[0] as string)
     expect(spoken[0]).toBe('Hello!')
@@ -223,7 +223,7 @@ describe('session (modo voz: TTS por frases)', () => {
     await session.stop(true)
   })
 
-  it('habla todas las frases en orden: no sintetiza la siguiente hasta que la anterior terminó de sonar', async () => {
+  it('prefetch: sintetiza la frase siguiente mientras suena la actual', async () => {
     mocks.immersiveStream.mockImplementation(async function* () {
       yield { type: 'session_id', session_id: 11 }
       yield { type: 'topic', topic: 'travel' }
@@ -239,15 +239,14 @@ describe('session (modo voz: TTS por frases)', () => {
     })
     await session.start()
     await flush()
-    // La 1ª frase ya se sintetizó; la 2ª debe esperar a que el audio termine
-    // (antes el bucle no esperaba y solo se oía la última frase).
-    expect(mocks.getTtsBuffer.mock.calls.length).toBe(1)
-    releaseFirst()
-    await flush()
+    // Ambas frases ya se sintetizaron: la 2ª se pidió en paralelo a la 1ª
+    // (prefetch). El orden de reproducción sigue siendo 1ª → 2ª.
     expect(mocks.getTtsBuffer.mock.calls.length).toBe(2)
     const spoken = mocks.getTtsBuffer.mock.calls.map((c) => c[0] as string)
     expect(spoken[0]).toBe('É bom ter uma ideia de onde ir.')
     expect(spoken[1]).toBe('Você já pensou em lugares com atrações diferentes?')
+    releaseFirst()
+    await flush()
     await session.stop(true)
   })
 
@@ -368,6 +367,65 @@ describe('session (modo voz: TTS por frases)', () => {
     expect(session.status).toContain('te escucho')
     resolveTts!(new ArrayBuffer(8))
     await flush()
+    await session.stop(true)
+  })
+
+  it('no sintetiza ninguna frase hasta que llega el `done` del stream', async () => {
+    let resolveDone: (() => void) | null = null
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 99 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'delta', text: 'Hello there. ' }
+      yield { type: 'delta', text: 'How are you? ' }
+      // El stream se queda "colgado" aquí: los deltas ya llegaron pero no hay done.
+      await new Promise<void>((r) => (resolveDone = r))
+      yield { type: 'done', reply: 'Hello there. How are you?', corrections: [] }
+    })
+    mocks.getTtsBuffer.mockResolvedValue(new ArrayBuffer(8))
+    const startPromise = session.start()
+    // Esperamos a que los deltas se hayan procesado pero sin done.
+    await new Promise((r) => setTimeout(r, 50))
+    await flush()
+    // Antes del done, NINGUNA frase se sintetiza (turno atómico).
+    expect(mocks.getTtsBuffer).not.toHaveBeenCalled()
+    resolveDone!()
+    await startPromise
+    await flush()
+    // Tras el done, se sintetizan las frases de la respuesta completa.
+    expect(mocks.getTtsBuffer).toHaveBeenCalled()
+    await session.stop(true)
+  })
+
+  it('sintetiza todas las frases sin pausas (prefetch activo)', async () => {
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 11 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'delta', text: 'Hello there. ' }
+      yield { type: 'delta', text: 'How are you? ' }
+      yield { type: 'delta', text: 'Nice to meet you.' }
+      yield { type: 'done', reply: 'Hello there. How are you? Nice to meet you.', corrections: [] }
+    })
+    const ttsCalls: string[] = []
+    mocks.getTtsBuffer.mockImplementation(async (text: string) => {
+      ttsCalls.push(text)
+      return new ArrayBuffer(8)
+    })
+    mocks.playBuffer.mockResolvedValue({
+      id: 1,
+      stop: vi.fn(),
+      get current() { return true },
+      waited: Promise.resolve(),
+    })
+
+    await session.start()
+    await flush()
+    await flush()
+
+    // Múltiples frases se sintetizaron (al menos 2)
+    expect(ttsCalls.length).toBeGreaterThanOrEqual(2)
+    expect(session.speaking).toBe(false)
+    expect(['idle', 'listening']).toContain(session.orb)
+
     await session.stop(true)
   })
 })

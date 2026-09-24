@@ -224,7 +224,7 @@
         class:active={settings.micSensitivity === 'baja'}
         onclick={() => settings.setMicSensitivity('baja')}
       >
-        Baja
+        Paciente
       </button>
       <button
         type="button"
@@ -240,7 +240,7 @@
         class:active={settings.micSensitivity === 'alta'}
         onclick={() => settings.setMicSensitivity('alta')}
       >
-        Alta
+        Veloz
       </button>
     </div>
   </div>

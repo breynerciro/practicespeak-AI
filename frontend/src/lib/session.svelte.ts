@@ -50,8 +50,6 @@ class SessionStore {
   // ------------------------------------------------------- habla en streaming
   /** Frases completas pendientes de sintetizar y reproducir. */
   private speechQueue: string[] = []
-  /** Caracteres del stream ya llevados a la cola de habla. */
-  private spokenChars = 0
   private streamFinished = false
   private speechFailed = false
   private drainJob: Promise<void> | null = null
@@ -61,6 +59,8 @@ class SessionStore {
   private bargeInFired = false
   /** Generación del habla actual: la invalida un barge y cada respuesta nueva. */
   private speechGen = 0
+  /** Síntesis en vuelo de la siguiente frase (prefetch para eliminar pausas). */
+  private prefetchNext: { chunk: string; promise: Promise<ArrayBuffer | null> } | null = null
 
   // -------------------------------------------------- entrenador de pronunciación
   /** Activo mientras se corrige una palabra: modela, escucha 2 intentos. */
@@ -132,13 +132,11 @@ class SessionStore {
       let gotTopic = ''
       this.resetStream()
       const gen = ++this.speechGen
-      this.spokenChars = 0
       for await (const ev of immersiveStream({ mode: 'start', language: settings.lang, topic, profile_id: profileId })) {
         if (ev.type === 'session_id') this.sessionId = ev.session_id
         else if (ev.type === 'topic') gotTopic = ev.topic
         else if (ev.type === 'delta') {
           this.streamText = ev.text
-          if (settings.mode === 'voice') this.pumpSpeech(gen, ev.text)
         }
         else if (ev.type === 'corrections') corrections = stripCorrections(ev.corrections)
         else if (ev.type === 'done') {
@@ -437,7 +435,6 @@ class SessionStore {
   private async continueTurn(text: string, origin: 'text' | 'voice') {
     this.resetStream()
     const gen = ++this.speechGen
-    this.spokenChars = 0
     try {
       let reply = ''
       let corrections: Correction[] = []
@@ -452,7 +449,6 @@ class SessionStore {
         if (ev.type === 'topic') topic = ev.topic
         else if (ev.type === 'delta') {
           this.streamText = ev.text
-          if (settings.mode === 'voice') this.pumpSpeech(gen, ev.text)
         }
         else if (ev.type === 'corrections') corrections = stripCorrections(ev.corrections)
         else if (ev.type === 'done') {
@@ -491,26 +487,22 @@ class SessionStore {
   }
 
   // ------------------------------------------------ habla en streaming (TTS)
-  /** Con cada delta del stream: encola las frases ya completas. */
-  private pumpSpeech(gen: number, streamed: string) {
-    if (gen !== this.speechGen) return
-    if (streamed.length <= this.spokenChars) return
-    const { consumed, sentences } = extractCompleted(streamed, this.spokenChars)
-    if (sentences.length) this.enqueueSpeech(gen, sentences)
-    if (consumed > this.spokenChars) this.spokenChars = Math.min(consumed, streamed.length)
-  }
-
-  /** Al recibir `done`: habla el tramo final e inicia la escucha al terminar. */
+  /** Al recibir `done`: habla la respuesta completa (turno atómico).
+   *  No se encola nada durante la generación: así la frase N+1 siempre
+   *  refleja lo que el estudiante respondió, no un fragmento calculado antes. */
   private finishSpeech(reply: string, gen: number) {
     if (gen !== this.speechGen) return
     this.streamFinished = true
-    const rest = reply.slice(this.spokenChars).trim()
-    if (rest) this.enqueueSpeech(gen, [rest])
+    const { consumed, sentences } = extractCompleted(reply)
+    const chunks = [...sentences]
+    const tail = reply.slice(consumed).trim()
+    if (tail) chunks.push(tail)
+    if (chunks.length) this.enqueueSpeech(gen, chunks)
     else {
-      // Respuesta ya consumida por el streaming: un drenaje aparcado esperando
-      // frases jamás volvería a despertar sin esto (kickDrain no hace nada si
-      // ya hay un drenaje vivo). Sin el toque, la sesión se quedaba en
-      // "speaking" y nunca volvía a escuchar.
+      // Respuesta vacía: el drenaje aparcado esperando frases jamás volvería
+      // a despertar sin esto (kickDrain no hace nada si ya hay un drenaje
+      // vivo). Sin el toque, la sesión se quedaba en "speaking" y nunca
+      // volvía a escuchar.
       this.queueWake?.()
       this.kickDrain()
     }
@@ -541,20 +533,44 @@ class SessionStore {
    * reintenta de inmediato y, si aún falla, se aparca en `deferred` para un
    * último intento al final (todas las frases se leen, no solo las primeras).
    */
-  private async speakChunk(chunk: string, gen: number, deferred: string[]): Promise<boolean> {
+  private async speakChunk(
+    chunk: string,
+    gen: number,
+    deferred: string[],
+    prefetchedData: ArrayBuffer | null = null
+  ): Promise<boolean> {
+    let data = prefetchedData
+    if (!data) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (gen !== this.speechGen) return false
+        try {
+          data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang], settings.speed)
+        } catch {
+          data = null
+        }
+        if (gen !== this.speechGen) return false
+        if (data) break
+        if (attempt === 0) await this.sleep(TTS_RETRY_DELAY_MS)
+      }
+    }
+    if (!data) {
+      deferred.push(chunk)
+      return false
+    }
+
+    // Lanzar prefetch de la siguiente frase (después de sintetizar la actual,
+    // para mantener el orden de las llamadas a getTtsBuffer)
+    if (this.speechQueue.length > 0 && (!this.prefetchNext || this.prefetchNext.chunk !== this.speechQueue[0])) {
+      const nextChunk = this.speechQueue[0]
+      this.prefetchNext = {
+        chunk: nextChunk,
+        promise: getTtsBuffer(nextChunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang], settings.speed)
+          .catch(() => null),
+      }
+    }
+
     for (let attempt = 0; attempt < 2; attempt++) {
       if (gen !== this.speechGen) return false
-      let data: ArrayBuffer | null = null
-      try {
-        data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang], settings.speed)
-      } catch {
-        data = null
-      }
-      if (gen !== this.speechGen) return false
-      if (!data) {
-        if (attempt === 0) await this.sleep(TTS_RETRY_DELAY_MS)
-        continue
-      }
       try {
         const h = await playBuffer(data, () => {})
         if (gen !== this.speechGen) return false
@@ -566,10 +582,12 @@ class SessionStore {
         await Promise.race([h.waited, this.sleep(PLAYBACK_WAIT_MAX_MS)])
         return gen === this.speechGen
       } catch {
-        continue
+        if (attempt === 1) {
+          deferred.push(chunk)
+          return false
+        }
       }
     }
-    deferred.push(chunk)
     return false
   }
 
@@ -580,6 +598,7 @@ class SessionStore {
     stopPlayback()
     const deferred: string[] = []
     let anySpoken = false
+    this.prefetchNext = null
     while (this.running || standalone) {
       // Cola vacía con stream aún abierto: ESPERAR a que lleguen frases
       // (antes el bucle salía y el tramo final nunca se sintetizaba).
@@ -590,10 +609,19 @@ class SessionStore {
       if (!this.speechQueue.length) break
       const gen = this.speechGen
       const chunk = this.speechQueue.shift()!
+
+      // Consumir datos prefetched si coinciden con este chunk
+      let prefetchedData: ArrayBuffer | null = null
+      if (this.prefetchNext && this.prefetchNext.chunk === chunk && gen === this.speechGen) {
+        prefetchedData = await this.prefetchNext.promise
+        this.prefetchNext = null
+      }
+
       this.orb = 'speaking'
       this.speaking = true
       this.status = ''
-      const played = await this.speakChunk(chunk, gen, deferred)
+
+      const played = await this.speakChunk(chunk, gen, deferred, prefetchedData)
       if (gen !== this.speechGen) break
       if (played) anySpoken = true
     }
@@ -657,6 +685,7 @@ class SessionStore {
     this.speaking = false
     this.bargeInFired = false
     this.speechGen = 0
+    this.prefetchNext = null
     // Si el drenaje está aparcado esperando frases, despertarlo para que
     // vea el reset y termine limpio (sin esto bloquearía el habla futura).
     this.queueWake?.()
