@@ -18,6 +18,7 @@ import { settings } from './settings.svelte'
 import { extractCompleted } from './speech'
 import { toast } from './toast.svelte'
 import type { Correction, PronunciationCoach, Turn } from './types'
+import { wakeScreenOn } from './wake-lock'
 
 /** Espera entre dos intentos de sintetizar la misma frase (red/edge inestable). */
 const TTS_RETRY_DELAY_MS = 250
@@ -103,6 +104,7 @@ class SessionStore {
     if (this.running || this.busy) return
     sendLog('INICIAR_CLICK modo=' + settings.mode)
     this.running = true
+    wakeScreenOn(true)
     this.resetStream()
     if (settings.mode === 'voice') unlockAudio()
     this.orb = 'thinking'
@@ -174,7 +176,6 @@ class SessionStore {
 
   async stop(notify = true) {
     this.cancelAutoListen()
-    micRecorder.release()
     stopPlayback()
     const sid = this.sessionId
     if (sid !== null) finishSession(sid)
@@ -185,6 +186,7 @@ class SessionStore {
   private reset() {
     this.running = false
     this.busy = false
+    wakeScreenOn(false)
     this.clearSpeech()
     this.history = []
     this.sessionId = null

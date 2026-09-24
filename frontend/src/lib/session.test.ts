@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   releaseRec: vi.fn(),
   stopRec: vi.fn(),
   cancelRec: vi.fn(),
+  wakeScreenOn: vi.fn(),
 }))
 
 vi.mock('./api', () => ({
@@ -53,6 +54,10 @@ vi.mock('./audio/vad', () => ({
   DEFAULT_VAD: { threshold: 0.03, silenceMs: 2200, maxMs: 20000, minBlobBytes: 1500 },
   tooSmall: (size: number) => size < 100,
   vadFor: () => ({ threshold: 0.03, silenceMs: 2200, maxMs: 20000, minBlobBytes: 1500 }),
+}))
+
+vi.mock('./wake-lock', () => ({
+  wakeScreenOn: mocks.wakeScreenOn,
 }))
 
 import { session } from './session.svelte'
@@ -151,6 +156,22 @@ describe('session (modo texto)', () => {
     expect(session.running).toBe(false)
     expect(session.history).toHaveLength(0)
     expect(session.sessionId).toBeNull()
+  })
+
+  it('mantiene la pantalla encendida mientras corre la sesión', async () => {
+    mocks.wakeScreenOn.mockClear()
+    await session.start()
+    expect(mocks.wakeScreenOn).toHaveBeenCalledWith(true)
+    mocks.wakeScreenOn.mockClear()
+    await session.stop(false)
+    expect(mocks.wakeScreenOn).toHaveBeenCalledWith(false)
+  })
+
+  it('no libera el micro al terminar la sesión (evita que iOS vuelva a pedir permiso)', async () => {
+    mocks.releaseRec.mockClear()
+    await session.start()
+    await session.stop(false)
+    expect(mocks.releaseRec).not.toHaveBeenCalled()
   })
 
   it('ante un fallo de red muestra error y deja de correr', async () => {

@@ -36,6 +36,8 @@ export class MicRecorder {
   private events: RecorderEvents = {}
   private bargeFired = false
   private bargeFrames = 0
+  /** Promesa en vuelo del getUserMedia (evita pedir el permiso dos veces). */
+  private micPromise: Promise<MediaStream> | null = null
 
   get recording(): boolean {
     return !!this.recorder
@@ -45,15 +47,23 @@ export class MicRecorder {
     return !!this.stream && this.stream.getAudioTracks().some((t) => t.readyState === 'live')
   }
 
-  /** Pide el micrófono una sola vez y monta el grafo de audio para el VAD. */
+  /** Pide el micrófono una sola vez por vida de la app y reutiliza el stream. */
   async ensureMic(): Promise<MediaStream> {
-    if (this.hasLiveMic()) return this.stream!
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
-    this.stream = stream
-    this.setupGraph(stream)
-    return stream
+    if (this.micPromise && this.hasLiveMic()) return this.micPromise
+    this.micPromise = navigator.mediaDevices
+      .getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
+      .then((stream) => {
+        this.stream = stream
+        this.setupGraph(stream)
+        return stream
+      })
+      .catch((err) => {
+        this.micPromise = null
+        throw err
+      })
+    return this.micPromise
   }
 
   private setupGraph(stream: MediaStream) {
@@ -137,6 +147,7 @@ export class MicRecorder {
   /** Detiene tracks, contextos de audio y analizadores. */
   release(): void {
     this.cancel()
+    this.micPromise = null
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop())
       this.stream = null
@@ -212,3 +223,10 @@ export class MicRecorder {
 
 const _recorder = new MicRecorder()
 export const micRecorder = _recorder
+
+// Al cerrar la app (o cambiar de pestaña en iOS), soltamos el micro para no
+// dejarlo ocupado. Durante la sesión el stream se mantiene vivo para evitar
+// que iOS/WebKit vuelva a pedir el permiso.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => _recorder.release())
+}
