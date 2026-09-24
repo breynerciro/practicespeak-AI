@@ -89,6 +89,14 @@ HTTPS_PORT = int(os.environ.get("NOVA_HTTPS_PORT", "8443"))
 # Dominio público HTTPS (para redirección y avisos del frontend); vacío = sin redirect
 PUBLIC_HOSTNAME = os.environ.get("NOVA_PUBLIC_HOSTNAME", "")
 
+# CORS: orígenes permitidos (separados por coma). Vacío = permite todos (desarrollo).
+# En producción, especificar dominios: "https://example.com,https://app.example.com"
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in (os.environ.get("NOVA_CORS_ORIGINS") or "").split(",")
+    if origin.strip()
+]
+
 # --- Datos persistentes ---
 # Carpeta para la base SQLite (y logs de run.sh). IMPORTANTE: fuera de /tmp,
 # para que las sesiones y correcciones sobrevivan a los reinicios cuando el

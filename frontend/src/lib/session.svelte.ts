@@ -11,11 +11,12 @@ import {
 } from './api'
 import { micRecorder } from './audio/recorder'
 import { playBuffer, stopPlayback, unlockAudio } from './audio/playback'
+import { playListenBeep } from './audio/feedback'
+import { playFiller } from './audio/fillers'
 import { vadFor, tooSmall } from './audio/vad'
 import { LANG_NAMES_ES } from './i18n'
 import { profileStore } from './profile.svelte'
 import { settings } from './settings.svelte'
-import { extractCompleted } from './speech'
 import { toast } from './toast.svelte'
 import type { Correction, PronunciationCoach, Turn } from './types'
 import { wakeScreenOn } from './wake-lock'
@@ -26,6 +27,11 @@ const TTS_RETRY_DELAY_MS = 250
 const PLAYBACK_WAIT_MAX_MS = 15_000
 
 export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking'
+
+interface PrefetchJob {
+  chunk: string
+  promise: Promise<ArrayBuffer | null>
+}
 
 class SessionStore {
   running = $state(false)
@@ -60,8 +66,12 @@ class SessionStore {
   private bargeInFired = false
   /** Generación del habla actual: la invalida un barge y cada respuesta nueva. */
   private speechGen = 0
+  /** Caracteres ya sintetizados (para progreso). */
+  private spokenChars = 0
+  /** Índice hasta donde se ha encolado texto para TTS (streaming). */
+  private lastSpokenIndex = 0
   /** Síntesis en vuelo de la siguiente frase (prefetch para eliminar pausas). */
-  private prefetchNext: { chunk: string; promise: Promise<ArrayBuffer | null> } | null = null
+  private prefetchNext: PrefetchJob | null = null
 
   // -------------------------------------------------- entrenador de pronunciación
   /** Activo mientras se corrige una palabra: modela, escucha 2 intentos. */
@@ -108,7 +118,7 @@ class SessionStore {
     this.resetStream()
     if (settings.mode === 'voice') unlockAudio()
     this.orb = 'thinking'
-    this.status = 'Eligiendo tema y preparando la conversación…'
+    this.status = ''
 
     if (settings.mode === 'voice') {
       try {
@@ -134,11 +144,21 @@ class SessionStore {
       let gotTopic = ''
       this.resetStream()
       const gen = ++this.speechGen
+      this.lastSpokenIndex = 0
+      // Reproduce filler mientras el LLM genera la respuesta inicial
+      playFiller(settings.lang)
       for await (const ev of immersiveStream({ mode: 'start', language: settings.lang, topic, profile_id: profileId })) {
         if (ev.type === 'session_id') this.sessionId = ev.session_id
         else if (ev.type === 'topic') gotTopic = ev.topic
         else if (ev.type === 'delta') {
           this.streamText = ev.text
+          // TTS en streaming: detectar frases completas y encolar inmediatamente
+          if (settings.mode === 'voice') {
+            const newSentences = this.extractNewSentences(ev.text)
+            if (newSentences.length) {
+              this.enqueueSpeech(gen, newSentences)
+            }
+          }
         }
         else if (ev.type === 'corrections') corrections = stripCorrections(ev.corrections)
         else if (ev.type === 'done') {
@@ -148,7 +168,7 @@ class SessionStore {
           throw new Error(ev.detail)
         }
       }
-      this.resetStream()
+      this.streamFinished = true
       if (gotTopic) this.topic = gotTopic
       this.addTurn('assistant', reply)
       this.showCorrections(corrections)
@@ -158,6 +178,7 @@ class SessionStore {
         this.transcriptOpen = false
         this.requestFocus()
       } else {
+        // Procesar el texto restante que no terminó en frase completa
         this.finishSpeech(reply, gen)
       }
     } catch (e) {
@@ -214,9 +235,11 @@ class SessionStore {
     if (!text || !this.running || this.busy) return
     this.busy = true
     this.orb = 'thinking'
-    this.status = 'PracticeSpeak está leyendo tu mensaje…'
+    this.status = ''
     this.resetStream()
     this.addTurn('user', text)
+    // Reproduce filler mientras el LLM genera la respuesta
+    playFiller(settings.lang)
     await this.continueTurn(text, 'text')
   }
 
@@ -240,6 +263,7 @@ class SessionStore {
     this.busy = true
     this.orb = 'listening'
     this.status = 'Escuchando… habla, o toca el orbe al terminar'
+    playListenBeep()
     try {
       const blob = await micRecorder.begin(vadFor(settings.micSensitivity), {
         onLevel: (level) => (this.energy = level),
@@ -282,7 +306,7 @@ class SessionStore {
       return
     }
     this.orb = 'thinking'
-    this.status = 'Procesando tu respuesta…'
+    this.status = ''
     let transcript = ''
     let confidence: number | null = null
     try {
@@ -309,13 +333,15 @@ class SessionStore {
       return
     }
     this.addTurn('user', transcript)
+    // Reproduce filler mientras el LLM genera la respuesta
+    playFiller(settings.lang)
     await this.continueTurn(transcript, 'voice')
   }
 
   /** Modo entrenador: adivina la palabra, la corrige por voz y pide 2 intentos. */
   private async startCoach(badTranscript: string) {
     this.orb = 'thinking'
-    this.status = 'Déjame adivinar lo que quisiste decir…'
+    this.status = ''
     sendLog('COACH_START')
     let coach: PronunciationCoach = { guessed: badTranscript, target_word: '', tip: '' }
     try {
@@ -353,7 +379,7 @@ class SessionStore {
   private async coachEvaluateAttempt(blob: Blob) {
     this.busy = true
     this.orb = 'thinking'
-    this.status = 'Escuchando tu intento…'
+    this.status = ''
     let transcript = ''
     let confidence: number | null = null
     try {
@@ -437,6 +463,7 @@ class SessionStore {
   private async continueTurn(text: string, origin: 'text' | 'voice') {
     this.resetStream()
     const gen = ++this.speechGen
+    this.lastSpokenIndex = 0
     try {
       let reply = ''
       let corrections: Correction[] = []
@@ -451,6 +478,13 @@ class SessionStore {
         if (ev.type === 'topic') topic = ev.topic
         else if (ev.type === 'delta') {
           this.streamText = ev.text
+          // TTS en streaming: detectar frases completas y encolar inmediatamente
+          if (origin === 'voice') {
+            const newSentences = this.extractNewSentences(ev.text)
+            if (newSentences.length) {
+              this.enqueueSpeech(gen, newSentences)
+            }
+          }
         }
         else if (ev.type === 'corrections') corrections = stripCorrections(ev.corrections)
         else if (ev.type === 'done') {
@@ -460,7 +494,7 @@ class SessionStore {
           throw new Error(ev.detail)
         }
       }
-      this.resetStream()
+      this.streamFinished = true
       if (topic) this.topic = topic
       this.addTurn('assistant', reply)
       this.showCorrections(corrections)
@@ -470,6 +504,7 @@ class SessionStore {
         this.status = 'Escribe tu respuesta…'
         this.requestFocus()
       } else {
+        // Procesar el texto restante que no terminó en frase completa
         this.finishSpeech(reply, gen)
       }
     } catch (e) {
@@ -488,23 +523,39 @@ class SessionStore {
     }
   }
 
+  /**
+   * Extrae frases completas nuevas del texto streaming.
+   * Detecta solo las frases que no se han encolado aún (desde lastSpokenIndex).
+   */
+  private extractNewSentences(text: string): string[] {
+    const newSentences: string[] = []
+    const remaining = text.slice(this.lastSpokenIndex)
+    const SENTENCE = /[.!?]+(?=\s|$)/g
+    let lastEnd = 0
+    for (const m of remaining.matchAll(SENTENCE)) {
+      const end = m.index + m[0].length
+      const sentence = remaining.slice(lastEnd, end).trim()
+      if (sentence) newSentences.push(sentence)
+      lastEnd = end
+    }
+    if (newSentences.length) {
+      this.lastSpokenIndex += lastEnd
+    }
+    return newSentences
+  }
+
   // ------------------------------------------------ habla en streaming (TTS)
-  /** Al recibir `done`: habla la respuesta completa (turno atómico).
-   *  No se encola nada durante la generación: así la frase N+1 siempre
-   *  refleja lo que el estudiante respondió, no un fragmento calculado antes. */
+  /** Al recibir `done`: procesa el texto restante que no terminó en frase completa.
+   *  Las frases completas ya se encolaron durante el streaming. */
   private finishSpeech(reply: string, gen: number) {
     if (gen !== this.speechGen) return
     this.streamFinished = true
-    const { consumed, sentences } = extractCompleted(reply)
-    const chunks = [...sentences]
-    const tail = reply.slice(consumed).trim()
-    if (tail) chunks.push(tail)
-    if (chunks.length) this.enqueueSpeech(gen, chunks)
-    else {
-      // Respuesta vacía: el drenaje aparcado esperando frases jamás volvería
-      // a despertar sin esto (kickDrain no hace nada si ya hay un drenaje
-      // vivo). Sin el toque, la sesión se quedaba en "speaking" y nunca
-      // volvía a escuchar.
+    // Procesar solo el texto restante (lo que no se encoló durante streaming)
+    const remaining = reply.slice(this.lastSpokenIndex).trim()
+    if (remaining) {
+      this.enqueueSpeech(gen, [remaining])
+    } else {
+      // Sin texto restante: despertar al drenaje por si está esperando
       this.queueWake?.()
       this.kickDrain()
     }
@@ -614,8 +665,9 @@ class SessionStore {
 
       // Consumir datos prefetched si coinciden con este chunk
       let prefetchedData: ArrayBuffer | null = null
-      if (this.prefetchNext && this.prefetchNext.chunk === chunk && gen === this.speechGen) {
-        prefetchedData = await this.prefetchNext.promise
+      const prefetch = this.prefetchNext as PrefetchJob | null
+      if (prefetch !== null && prefetch.chunk === chunk && gen === this.speechGen) {
+        prefetchedData = await prefetch.promise
         this.prefetchNext = null
       }
 
@@ -682,6 +734,7 @@ class SessionStore {
   private clearSpeech() {
     this.speechQueue = []
     this.spokenChars = 0
+    this.lastSpokenIndex = 0
     this.streamFinished = false
     this.speechFailed = false
     this.speaking = false

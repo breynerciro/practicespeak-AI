@@ -128,7 +128,7 @@ class TestTutorChat:
 
 class TestPickTopic:
     def setup_method(self):
-        ai.RECENT_TOPICS.clear()
+        ai.reset_topic_history()
 
     def test_catalog_has_20_unique_topics(self):
         assert len(ai.TOPICS) == 20
@@ -144,7 +144,12 @@ class TestPickTopic:
     def test_recent_buffer_capped(self):
         for _ in range(15):
             ai.pick_topic()
-        assert len(ai.RECENT_TOPICS) == ai.RECENT_TOPICS_MAX
+        # El TopicManager mantiene internamente el historial capped
+        # Verificamos que no hay repetición en los últimos 6
+        ai.reset_topic_history()
+        topics = [ai.pick_topic() for _ in range(15)]
+        last_six = topics[-6:]
+        assert len(set(last_six)) == 6  # Los últimos 6 deben ser únicos
 
 
 class TestImmersiveStart:

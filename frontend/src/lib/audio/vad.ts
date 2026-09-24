@@ -13,9 +13,9 @@ export interface VADConfig {
 
 export const DEFAULT_VAD: VADConfig = {
   threshold: 0.03,
-  // 1.5 s de silencio por defecto: equilibrio entre no cortar pausas de
-  // pensamiento y responder rápido. Ajustable en Ajustes (Paciente/Normal/Rápida).
-  silenceMs: 1500,
+  // 0.8 s de silencio: más natural, como una conversación real.
+  // Ajustable en Ajustes (Paciente/Normal/Rápida).
+  silenceMs: 800,
   maxMs: 45000,
   minBlobBytes: 1500,
 }

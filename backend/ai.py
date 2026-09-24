@@ -2,12 +2,20 @@ import difflib
 import json
 import random
 import re
+import time
 import unicodedata
 
 import httpx
 
 from . import config
 from .log import log_info
+from .prompts import (
+    build_continue_user_message,
+    build_immersive_system,
+    build_pronunciation_system,
+    build_start_user_message,
+    build_system_prompt,
+)
 
 OLLAMA_URL = config.OLLAMA_BASE_URL + "/api/chat"
 OLLAMA_TAGS_URL = config.OLLAMA_BASE_URL + "/api/tags"
@@ -21,43 +29,6 @@ FALLBACK_MODEL = config.os.environ.get("NOVA_OLLAMA_FALLBACK_MODEL", "qwen3:1.7b
 class NovaError(RuntimeError):
     """Error al comunicarse con Ollama (modelo local no disponible o respuesta inesperada)."""
 
-SYSTEM_TEMPLATE = """You are an AI language tutor for __LANG__. You help the user practice and learn __LANG__.
-
-Rules:
-- The user's mother tongue is Spanish. Explain concepts in Spanish when needed.
-- Always respond as a helpful, encouraging tutor.
-- __MODE__
-- When correcting, be precise but kind. Explain the rule briefly.
-- Respond ONLY with valid JSON, no extra text."""
-
-MODE_SPECIFIC = {
-    "conversation": """- Carry a natural conversation in __LANG__.
-- After replying, if the user made mistakes in their last message, list corrections.
-- Reply JSON format:
-  {"reply": "your natural reply in __LANG__", "corrections": [{"error": "text with the mistake", "correction": "correct version", "explanation": "brief rule in Spanish"}]}
-- If there are no mistakes, corrections must be an empty array.""",
-    "grammar": """- Correct the user's text.
-- Reply JSON format:
-  {"corrected": "the fully corrected text", "errors": [{"error": "part with mistake", "correction": "fixed part", "explanation": "brief rule in Spanish"}], "summary": "short summary in Spanish"}
-- If the text has no errors, corrected equals the input and errors is empty.""",
-}
-
-IMMERSIVE_SYSTEM = """You are PracticeSpeak, a friendly language partner for __LANG__ — like a close friend who happens to be a great speaker of the language. The student's mother tongue is Spanish. You practice with them ONLY by voice. Your name is PracticeSpeak. In your FIRST message of a session you must greet the student like a friend would ("Hi! I'm PracticeSpeak — so happy to chat with you today!", in __LANG__).
-
-Rules:
-- Talk like a CLOSE FRIEND: casual, warm, playful. Use contractions, filler words and colloquialisms a friend would use ("gonna", "kinda", "hey", "you know?" in __LANG__ equivalent). Ask about their day, their feelings, react like a friend hearing news — not like a teacher evaluating homework.
-- Always speak in __LANG__, at a B1-C1 level: short, clear, natural sentences.
-- ALWAYS end your reply with ONE follow-up question so the conversation keeps going.
-- NEVER repeat a question you already asked in this conversation, and never rephrase one you already asked. Each follow-up must explore a NEW angle: a detail, a reason, a personal story, a comparison, or a hypothetical.
-- React FIRST to what the student just said (be warm, curious, surprised, or sympathetic) before asking anything new. Reference a specific word or idea they used.
-- Every 2-3 exchanges on one point, move the conversation to a related new sub-topic instead of circling the same idea.
-- Vary your openers: never start two consecutive replies with the same words or the same pattern.
-- If the student makes mistakes in their last message, correct them in real time with a kind, brief explanation in Spanish.
-- If the student hesitates or goes off-topic, gently encourage them and steer back to the topic.
-- Keep every reply SHORT: 1-3 sentences plus your question.
-- Respond ONLY with valid JSON, no extra text:
-  {"topic": "the current topic", "reply": "your words in __LANG__", "corrections": [{"error": "...", "correction": "...", "explanation": "brief rule in Spanish"}]}
-- corrections must be an empty array if the student made no mistakes."""
 
 TOPICS = [
     "travel",
@@ -82,22 +53,61 @@ TOPICS = [
     "weekend plans",
 ]
 
-# Temas usados recientemente (los últimos N de las sesiones) para no repetirlos.
-RECENT_TOPICS: list[str] = []
-RECENT_TOPICS_MAX = 6
+
+class TopicManager:
+    """Gestiona la selección de temas evitando repeticiones recientes.
+
+    Encapsula el estado de temas usados para hacerlo testable y thread-safe.
+    """
+
+    def __init__(self, max_recent: int = 6):
+        self._recent: list[str] = []
+        self._max_recent = max_recent
+
+    def pick(self, available: list[str] | None = None) -> str:
+        """Elige un tema al azar evitando los últimos usados.
+
+        Si todos están quemados, saca de la lista completa.
+        """
+        pool = available if available is not None else TOPICS
+        candidates = [t for t in pool if t not in self._recent]
+        if not candidates:
+            candidates = list(pool)
+        topic = random.choice(candidates)
+        self._recent.append(topic)
+        if len(self._recent) > self._max_recent:
+            self._recent = self._recent[-self._max_recent:]
+        return topic
+
+    def reset(self) -> None:
+        """Limpia el historial de temas recientes."""
+        self._recent = []
+
+
+# Instancia global para mantener consistencia en la sesión
+_topic_manager = TopicManager()
+
+
+# Caché para resolve_model(): evita hacer HTTP a /api/tags en cada petición.
+_MODEL_CACHE: dict = {"model": None, "ts": 0.0}
+_MODEL_CACHE_TTL = 30.0  # segundos
+
+
+def reset_model_cache() -> None:
+    """Limpia la caché de modelos. Solo para tests."""
+    _MODEL_CACHE["model"] = None
+    _MODEL_CACHE["ts"] = 0.0
+
+
+def reset_topic_history() -> None:
+    """Limpia el historial de temas. Solo para tests."""
+    _topic_manager.reset()
 
 
 def pick_topic() -> str:
     """Elige un tema al azar evitando los últimos usados; si todos están
     quemados, saca de la lista completa."""
-    available = [t for t in TOPICS if t not in RECENT_TOPICS]
-    if not available:
-        available = TOPICS[:]
-    topic = random.choice(available)
-    RECENT_TOPICS.append(topic)
-    if len(RECENT_TOPICS) > RECENT_TOPICS_MAX:
-        del RECENT_TOPICS[:-RECENT_TOPICS_MAX]
-    return topic
+    return _topic_manager.pick()
 
 
 LANG_NAMES = {
@@ -153,10 +163,7 @@ def _lang_name_es(language: str) -> str:
 
 def _build_messages(mode: str, language: str, history: list[dict], message: str) -> list[dict]:
     lang = LANG_NAMES.get(language, "English")
-    system = (
-        SYSTEM_TEMPLATE.replace("__LANG__", lang)
-        .replace("__MODE__", MODE_SPECIFIC[mode].replace("__LANG__", lang))
-    )
+    system = build_system_prompt(mode, lang)
     msgs = [{"role": "system", "content": system}]
     for h in history:
         if h.get("role") in ("user", "assistant"):
@@ -333,7 +340,7 @@ async def correct_grammar(language: str, text: str) -> dict:
 
 async def immersive_start(language: str, topic: str | None = None) -> dict:
     lang = _lang_name(language)
-    system = IMMERSIVE_SYSTEM.replace("__LANG__", lang)
+    system = build_immersive_system(lang)
     if topic:
         user_msg = (
             f"BEGIN a new immersive session. The student suggested this topic: '{topic}'.\n"
@@ -343,11 +350,7 @@ async def immersive_start(language: str, topic: str | None = None) -> dict:
         chosen = pick_topic()
         log_info(f"TOPIC_ELEGIDO: {chosen}")
         topic = chosen
-        user_msg = (
-            f"BEGIN a new immersive session. The topic for this session is '{chosen}'.\n"
-            f"Talk ONLY about '{chosen}'; do not pick a different topic.\n"
-            f"Greet the student briefly and ask your first engaging question about '{chosen}' in {lang}. Keep it short."
-        )
+        user_msg = build_start_user_message(lang, chosen)
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user_msg}]
     raw = await ask_ollama(messages)
     data = _clean_json(raw)
@@ -362,20 +365,13 @@ async def immersive_start(language: str, topic: str | None = None) -> dict:
 
 async def immersive_continue(language: str, history: list[dict], user_text: str) -> dict:
     lang = _lang_name(language)
-    system = IMMERSIVE_SYSTEM.replace("__LANG__", lang)
+    system = build_immersive_system(lang)
     msgs = [{"role": "system", "content": system}]
     for h in history[-12:]:
         if h.get("role") in ("user", "assistant"):
             msgs.append({"role": h["role"], "content": h["content"]})
-    user_content = f"The student said (voice transcription): {user_text}"
     asked = _previous_questions(history)
-    if asked:
-        asked_block = "\n".join(f"- {q}" for q in asked[-8:])
-        user_content += (
-            "\n\nQuestions you ALREADY asked in this conversation (do NOT repeat them "
-            "and do NOT rephrase them; ask something NEW that explores a different angle):\n"
-            f"{asked_block}"
-        )
+    user_content = build_continue_user_message(user_text, asked)
     msgs.append({"role": "user", "content": user_content})
     raw = await ask_ollama(msgs)
     data = _clean_json(raw)
@@ -414,30 +410,19 @@ async def immersive_chat_stream(
     `NovaError` para que el endpoint los convierta en evento `error`.
     """
     lang = _lang_name(language)
-    system = IMMERSIVE_SYSTEM.replace("__LANG__", lang)
+    system = build_immersive_system(lang)
     if mode == "start":
         chosen = resolve_start_topic(topic)
         yield {"type": "topic", "topic": chosen}
-        user_msg = (
-            f"BEGIN a new immersive session. The topic for this session is '{chosen}'.\n"
-            f"Talk ONLY about '{chosen}'; do not pick a different topic.\n"
-            f"Greet the student briefly and ask your first engaging question about '{chosen}' in {lang}. Keep it short."
-        )
+        user_msg = build_start_user_message(lang, chosen)
         msgs = [{"role": "system", "content": system}, {"role": "user", "content": user_msg}]
     else:
         msgs = [{"role": "system", "content": system}]
         for turn in history[-12:]:
             if turn.get("role") in ("user", "assistant"):
                 msgs.append({"role": turn["role"], "content": turn["content"]})
-        content = f"The student said (voice transcription): {user_text}"
         asked = _previous_questions(history)
-        if asked:
-            asked_block = "\n".join(f"- {q}" for q in asked[-8:])
-            content += (
-                "\n\nQuestions you ALREADY asked in this conversation (do NOT repeat them "
-                "and do NOT rephrase them; ask something NEW that explores a different angle):\n"
-                f"{asked_block}"
-            )
+        content = build_continue_user_message(user_text, asked)
         msgs.append({"role": "user", "content": content})
 
     buffer = ""
@@ -478,20 +463,6 @@ async def check_ollama() -> bool:
             return True
     except Exception:
         return False
-
-
-PRONUNCIATION_SYSTEM = """You are a pronunciation coach for __LANG__ learners whose mother tongue is Spanish.
-Given a voice transcription that likely contains misheard words, guess what the student MEANT to say.
-You get the tutor's last message as CONTEXT: the student is answering that, so use its vocabulary to repair the transcript.
-
-Rules:
-- Reply ONLY with valid JSON, no extra text:
-  {"guessed": "what the student most likely intended to say in __LANG__", "target_word": "the ONE word or short phrase whose pronunciation was off (in __LANG__)", "tip": "ONE short pronunciation tip in Spanish (max 12 words) about how to place mouth/tongue for that word"}
-- "guessed" must be a faithful minimal repair of the transcript: keep everything the student said right, fix only what sounds like a mispronounced word, preferring words that fit the CONTEXT. If the transcript is actually fine, guessed equals transcript and target_word is empty.
-- "target_word" must be a CONTENT word (noun, verb, adjective) that was mispronounced — NEVER a short function word like "em", "the", "a", "que". Pick the one whose sounds differ most between Spanish and __LANG__.
-- If the transcription is unintelligible, make your best phonetic guess anyway.
-- Never lecture. The tip must be practical and phonetic (e.g. "la 'th' va entre los dientes, como una 'z' suave española").
-"""
 
 
 _FUNC_WORDS = frozenset(
@@ -631,7 +602,7 @@ async def pronunciation_coach(transcript: str, language: str, context: str = "")
     clave hasta 2 veces antes de continuar la conversación. `context` es el
     último mensaje del tutor: ancla la reparación al vocabulario esperado."""
     lang = _lang_name(language)
-    system = PRONUNCIATION_SYSTEM.replace("__LANG__", lang)
+    system = build_pronunciation_system(lang)
     user_content = ""
     if context.strip():
         user_content += f"CONTEXT (the tutor just said this): {context.strip()}\n\n"
@@ -682,8 +653,13 @@ async def pronunciation_coach(transcript: str, language: str, context: str = "")
 async def resolve_model() -> str:
     """Devuelve el modelo configurado si existe en Ollama; si no, el fallback.
 
-    Evita 503 en instalaciones donde falta un modelo personalizado. Muy barata:
-    una petición GET local a /api/tags (sin generar tokens)."""
+    Evita 503 en instalaciones donde falta un modelo personalizado. El resultado
+    se cachea por 30 segundos para evitar HTTP excesivo a /api/tags.
+    """
+    now = time.monotonic()
+    if _MODEL_CACHE["model"] is not None and now - _MODEL_CACHE["ts"] < _MODEL_CACHE_TTL:
+        return _MODEL_CACHE["model"]
+
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(OLLAMA_TAGS_URL)
@@ -691,13 +667,19 @@ async def resolve_model() -> str:
             names = {m.get("name", "") for m in resp.json().get("models", [])}
     except Exception:
         return MODEL
-    if MODEL in names or not names:
-        return MODEL
-    for name in names:
-        base = name.split(":")[0]
-        if MODEL == base or MODEL.startswith(base + ":"):
-            return MODEL
-    fallback = FALLBACK_MODEL if FALLBACK_MODEL in names else next(iter(names), MODEL)
-    if fallback != MODEL:
-        log_info(f"MODEL_FALLBACK {MODEL} -> {fallback}")
-    return fallback
+
+    result = MODEL
+    if MODEL not in names and names:
+        for name in names:
+            base = name.split(":")[0]
+            if MODEL == base or MODEL.startswith(base + ":"):
+                break
+        else:
+            fallback = FALLBACK_MODEL if FALLBACK_MODEL in names else next(iter(names), MODEL)
+            if fallback != MODEL:
+                log_info(f"MODEL_FALLBACK {MODEL} -> {fallback}")
+            result = fallback
+
+    _MODEL_CACHE["model"] = result
+    _MODEL_CACHE["ts"] = now
+    return result

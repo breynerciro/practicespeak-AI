@@ -12,7 +12,7 @@ describe('vad', () => {
     expect(alta.silenceMs).toBe(900)
     expect(normal).toEqual(DEFAULT_VAD)
     expect(normal).not.toBe(DEFAULT_VAD)
-    expect(DEFAULT_VAD.silenceMs).toBe(1500)
+    expect(DEFAULT_VAD.silenceMs).toBe(800)
   })
 
   it('por defecto usa sensibilidad normal (copia fresca)', () => {

@@ -163,6 +163,13 @@ def finish_session(session_id: int) -> None:
         conn.execute("UPDATE sessions SET finished_at = ? WHERE id = ?", (time.time(), session_id))
 
 
+def _session_filter(profile_id: int | None) -> tuple[str, tuple]:
+    """SQL WHERE + params para filtrar sesiones por perfil."""
+    if profile_id is None:
+        return "", ()
+    return " WHERE profile_id = ?", (profile_id,)
+
+
 def _correction_filter(profile_id: int | None) -> tuple[str, tuple]:
     """SQL + params para filtrar correcciones por perfil (JOIN con sesiones)."""
     if profile_id is None:
@@ -170,42 +177,63 @@ def _correction_filter(profile_id: int | None) -> tuple[str, tuple]:
     return " JOIN sessions s ON s.id = corrections.session_id AND s.profile_id = ?", (profile_id,)
 
 
+def _count_sessions(conn: sqlite3.Connection, where: str, params: tuple) -> int:
+    """Cuenta sesiones con el filtro dado."""
+    sql = "SELECT COUNT(*) AS sessions FROM sessions" + where
+    return conn.execute(sql, params).fetchone()["sessions"]
+
+
+def _count_sessions_last_week(conn: sqlite3.Connection, where: str, params: tuple) -> int:
+    """Cuenta sesiones de la última semana con el filtro dado."""
+    one_week = time.time() - 7 * 86400
+    if where:
+        sql = "SELECT COUNT(*) AS sessions FROM sessions" + where + " AND started_at >= ?"
+        params = params + (one_week,)
+    else:
+        sql = "SELECT COUNT(*) AS sessions FROM sessions WHERE started_at >= ?"
+        params = (one_week,)
+    return conn.execute(sql, params).fetchone()["sessions"]
+
+
+def _count_corrections(conn: sqlite3.Connection, join_sql: str, params: tuple) -> int:
+    """Cuenta correcciones con el JOIN dado."""
+    sql = "SELECT COUNT(*) AS n FROM corrections" + join_sql
+    return conn.execute(sql, params).fetchone()["n"]
+
+
+def _sessions_by_language(conn: sqlite3.Connection, where: str, params: tuple) -> dict[str, int]:
+    """Agrupa sesiones por idioma."""
+    sql = "SELECT language, COUNT(*) AS n FROM sessions" + where + " GROUP BY language ORDER BY n DESC"
+    rows = conn.execute(sql, params).fetchall()
+    return {r["language"]: r["n"] for r in rows}
+
+
+def _top_topics_with_errors(conn: sqlite3.Connection, join_sql: str, params: tuple) -> dict[str, int]:
+    """Top 10 temas con más errores."""
+    where_clause = (" AND" if join_sql else " WHERE") + " corrections.topic IS NOT NULL"
+    sql = (
+        "SELECT corrections.topic AS topic, COUNT(*) AS n FROM corrections"
+        + join_sql + where_clause
+        + " GROUP BY corrections.topic ORDER BY n DESC LIMIT 10"
+    )
+    rows = conn.execute(sql, params).fetchall()
+    return {r["topic"]: r["n"] for r in rows}
+
+
 def stats(profile_id: int | None = None) -> dict:
+    """Estadísticas de progreso: sesiones, correcciones, por idioma y tema."""
     with _lock:
         conn = _get_conn()
-        one_week = time.time() - 7 * 86400
-        session_filter = " WHERE profile_id == ?" if profile_id is not None else ""
-        session_params = (profile_id,) if profile_id is not None else ()
+        session_where, session_params = _session_filter(profile_id)
+        corr_join, corr_params = _correction_filter(profile_id)
 
-        totals = conn.execute("SELECT COUNT(*) AS sessions FROM sessions" + session_filter, session_params).fetchone()
-        week = conn.execute(
-            "SELECT COUNT(*) AS sessions FROM sessions"
-            + (session_filter if profile_id is not None else " WHERE started_at >= ?")
-            + (" AND started_at >= ?" if profile_id is not None else ""),
-            session_params + (one_week,),
-        ).fetchone()
-
-        corr_sql, corr_params = _correction_filter(profile_id)
-        corr = conn.execute(
-            "SELECT COUNT(*) AS n FROM corrections" + corr_sql, corr_params
-        ).fetchone()
-        by_lang = conn.execute(
-            "SELECT language, COUNT(*) AS n FROM sessions" + session_filter + " GROUP BY language ORDER BY n DESC",
-            session_params,
-        ).fetchall()
-        by_topic = conn.execute(
-            "SELECT corrections.topic AS topic, COUNT(*) AS n FROM corrections" + corr_sql
-            + (" AND" if corr_sql else " WHERE") + " corrections.topic IS NOT NULL"
-            + " GROUP BY corrections.topic ORDER BY n DESC LIMIT 10",
-            corr_params,
-        ).fetchall()
-    return {
-        "total_sessions": totals["sessions"],
-        "sessions_last_7d": week["sessions"],
-        "total_corrections": corr["n"],
-        "by_language": {r["language"]: r["n"] for r in by_lang},
-        "top_topics_with_errors": {r["topic"]: r["n"] for r in by_topic},
-    }
+        return {
+            "total_sessions": _count_sessions(conn, session_where, session_params),
+            "sessions_last_7d": _count_sessions_last_week(conn, session_where, session_params),
+            "total_corrections": _count_corrections(conn, corr_join, corr_params),
+            "by_language": _sessions_by_language(conn, session_where, session_params),
+            "top_topics_with_errors": _top_topics_with_errors(conn, corr_join, corr_params),
+        }
 
 
 def export_anki_csv(profile_id: int | None = None) -> str:

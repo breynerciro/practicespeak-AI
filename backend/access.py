@@ -9,6 +9,7 @@ Tres piezas independientes (todas opcionales):
 - Semáforo de streams simultáneos (NOVA_MAX_CONCURRENT_STREAMS) para que
   varias personas a la vez no saturen la CPU del LLM.
 """
+import hmac
 import time
 from collections import defaultdict, deque
 
@@ -30,12 +31,16 @@ def check_access_code(request) -> bool:
     """True si la petición puede pasar (o si no hay código configurado).
 
     La comparación ignora mayúsculas/minúsculas y espacios: el código suele
-    copiarse a mano desde un chat de WhatsApp."""
+    copiarse a mano desde un chat de WhatsApp. Usa hmac.compare_digest para
+    prevenir timing attacks.
+    """
     if not config.ACCESS_CODE:
         return True
     if request.url.path in PUBLIC_PATHS:
         return True
-    return _provided_code(request).casefold() == config.ACCESS_CODE.casefold()
+    provided = _provided_code(request).casefold()
+    expected = config.ACCESS_CODE.casefold()
+    return hmac.compare_digest(provided, expected)
 
 
 def code_ok(request) -> bool:
@@ -43,8 +48,14 @@ def code_ok(request) -> bool:
 
     Helper para /api/health: la ruta es pública, pero gracias a este campo el
     frontend puede validar el código contra health (needs_code dinámico) sin
-    necesitar un endpoint de login aparte."""
-    return not config.ACCESS_CODE or _provided_code(request).casefold() == config.ACCESS_CODE.casefold()
+    necesitar un endpoint de login aparte. Usa hmac.compare_digest para
+    prevenir timing attacks.
+    """
+    if not config.ACCESS_CODE:
+        return True
+    provided = _provided_code(request).casefold()
+    expected = config.ACCESS_CODE.casefold()
+    return hmac.compare_digest(provided, expected)
 
 
 # ---------------------------------------------------------------- rate limit

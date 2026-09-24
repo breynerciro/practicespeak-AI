@@ -35,9 +35,12 @@ _FRONTEND_FALLBACK_HTML = """<!doctype html><html lang="es"><head><meta charset=
 
 app = FastAPI(title="PracticeSpeak AI")
 
+# CORS: si NOVA_CORS_ORIGINS está vacío (desarrollo), permite todos los orígenes.
+# En producción, configurar con dominios específicos para mayor seguridad.
+cors_origins = config.CORS_ORIGINS if config.CORS_ORIGINS else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
