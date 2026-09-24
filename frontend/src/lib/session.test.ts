@@ -259,8 +259,67 @@ describe('session (modo voz: TTS por frases)', () => {
       yield { type: 'done', reply: 'Hi!', corrections: [] }
     })
     await session.start()
+    // El drenaje reintenta la frase y hace una pasada final antes de rendirse.
+    await new Promise((r) => setTimeout(r, 800))
     await flush()
     expect(session.transcriptOpen).toBe(true)
+    await session.stop(true)
+  })
+
+  it('reintenta una frase que falla de forma puntual y la acaba leyendo', async () => {
+    let seen = 0
+    mocks.getTtsBuffer.mockImplementation(async () => {
+      seen++
+      return seen === 1 ? null : new ArrayBuffer(8)
+    })
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 21 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'delta', text: 'Keep going!' }
+      yield { type: 'done', reply: 'Keep going!', corrections: [] }
+    })
+    await session.start()
+    await new Promise((r) => setTimeout(r, 400))
+    await flush()
+    const texts = mocks.getTtsBuffer.mock.calls.map((c) => c[0] as string)
+    expect(texts.filter((t) => t === 'Keep going!').length).toBeGreaterThanOrEqual(2)
+    expect(session.speaking).toBe(false)
+    expect(session.transcriptOpen).toBe(false)
+    await session.stop(true)
+  })
+
+  it('no descarta el resto de la respuesta si una frase a mitad falla', async () => {
+    mocks.getTtsBuffer.mockImplementation(async (text: string) => (text === 'Hello there.' ? null : new ArrayBuffer(8)))
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 22 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'delta', text: 'Hello there. ' }
+      yield { type: 'done', reply: 'Hello there. This is a longer reply!', corrections: [] }
+    })
+    await session.start()
+    await new Promise((r) => setTimeout(r, 900))
+    await flush()
+    const spoken = mocks.getTtsBuffer.mock.calls.map((c) => c[0] as string)
+    // La frase que sí se pudo leer NUNCA se abandona por culpa de la otra.
+    expect(spoken).toContain('This is a longer reply!')
+    expect(session.speaking).toBe(false)
+    // Hubo voz (parcial): la sesión sigue normal, sin marcar el transcript.
+    expect(session.transcriptOpen).toBe(false)
+    await session.stop(true)
+  })
+
+  it('tras una respuesta ya consumida por el streaming no queda colgada la escucha', async () => {
+    mocks.getTtsBuffer.mockResolvedValue(new ArrayBuffer(8))
+    mocks.immersiveStream.mockImplementation(async function* () {
+      yield { type: 'session_id', session_id: 23 }
+      yield { type: 'topic', topic: 'travel' }
+      yield { type: 'delta', text: 'Hello!' }
+      yield { type: 'done', reply: 'Hello!', corrections: [] }
+    })
+    await session.start()
+    await flush()
+    expect(session.speaking).toBe(false)
+    expect(['idle', 'listening']).toContain(session.orb)
     await session.stop(true)
   })
 
@@ -274,29 +333,21 @@ describe('session (modo voz: TTS por frases)', () => {
     await session.stop(true)
   })
 
-  it('hablar por encima del tutor la interrumpe y pasa a escucharte', async () => {
+  it('el tutor termina de leer toda la respuesta sin cortes por ruido del micro', async () => {
     mocks.immersiveStream.mockImplementation(async function* () {
       yield { type: 'session_id', session_id: 9 }
       yield { type: 'topic', topic: 'travel' }
-      yield { type: 'delta', text: 'Hello there.' }
-      yield { type: 'done', reply: 'Hello there. This is a longer reply!', corrections: [] }
+      yield { type: 'delta', text: 'Hello. ' }
+      yield { type: 'delta', text: 'How are you? ' }
+      yield { type: 'delta', text: 'Nice to meet you.' }
+      yield { type: 'done', reply: 'Hello. How are you? Nice to meet you.', corrections: [] }
     })
-    let resolveTts: ((v: ArrayBuffer | null) => void) | null = null
-    mocks.getTtsBuffer.mockImplementation(() => new Promise((r) => (resolveTts = r)))
+    mocks.getTtsBuffer.mockResolvedValue(new ArrayBuffer(8))
     await session.start()
     await flush()
-    expect(session.orb).toBe('speaking')
-    const bargeEvents = mocks.beginRec.mock.calls
-      .map((c) => c[1] as { onBarge?: () => void } | undefined)
-      .find((e) => typeof e?.onBarge === 'function')
-    expect(bargeEvents).toBeTruthy()
-    bargeEvents!.onBarge!()
-    await flush()
+    expect(mocks.getTtsBuffer).toHaveBeenCalled()
     expect(session.speaking).toBe(false)
-    expect(session.orb).toBe('listening')
-    expect(session.status).toContain('te escucho')
-    resolveTts!(new ArrayBuffer(8))
-    await flush()
+    expect(['idle', 'listening']).toContain(session.orb)
     await session.stop(true)
   })
 

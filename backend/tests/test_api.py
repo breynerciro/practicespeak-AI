@@ -253,7 +253,7 @@ class TestPronunciationCoach:
     """Entrenador: adivina la palabra mal pronunciada y da un tip."""
 
     def test_analyze_returns_guess_word_and_tip(self, client, monkeypatch):
-        async def fake_coach(transcript, language):
+        async def fake_coach(transcript, language, context=""):
             return {
                 "guessed": "Eu quero ir às atrações",
                 "target_word": "atrações",

@@ -435,3 +435,85 @@ class TestPronunciationCoach:
         result = run(ai.pronunciation_coach("hola que tal", "es"))
         assert result["guessed"] == "hola que tal"
         assert result["target_word"] == ""
+
+    def test_function_word_target_is_fixed_deterministically(self, monkeypatch):
+        """El LLM elige 'em' (funcional): el backend lo sustituye por la palabra
+        reparada real mediante difflib contra la transcripción."""
+        async def fake_ask(messages):
+            return json.dumps(
+                {
+                    "guessed": "Você já pensou em lugares com atrações diferentes?",
+                    "target_word": "em",
+                    "tip": "",
+                }
+            )
+
+        monkeypatch.setattr(ai, "ask_ollama", fake_ask)
+        result = run(
+            ai.pronunciation_coach(
+                "Voce happen show em atracois diferentes?",
+                "pt",
+                context="É bom ter uma ideia de onde ir. Você já pensou em lugares com atrações diferentes?",
+            )
+        )
+        assert result["target_word"] == "atrações"
+
+    def test_llm_copying_context_is_rescued_deterministically(self, monkeypatch):
+        """El LLM débil copia el CONTEXT como guessed: se descarta y el rescate
+        determinista repara la transcripción alineándola con el contexto."""
+        async def fake_ask(messages):
+            return json.dumps(
+                {
+                    "guessed": "É bom ter uma ideia de onde ir.",
+                    "target_word": "onde",
+                    "tip": "",
+                }
+            )
+
+        monkeypatch.setattr(ai, "ask_ollama", fake_ask)
+        result = run(
+            ai.pronunciation_coach(
+                "Voce happen show em atracois diferentes?",
+                "pt",
+                context="É bom ter uma ideia de onde ir. Você já pensou em lugares com atrações diferentes?",
+            )
+        )
+        assert result["target_word"] == "atrações"
+        assert "atrações" in result["guessed"]
+        assert "ideia de onde ir" not in result["guessed"]
+
+    def test_repair_from_context_pure(self):
+        out = ai._repair_from_context(
+            "Voce happen show em atracois diferentes?",
+            "Você já pensou em lugares com atrações diferentes?",
+        )
+        assert out is not None
+        repaired, target = out
+        assert target == "atrações"
+        assert "atrações" in repaired
+        assert ai._repair_from_context("hola", "") is None
+
+    def test_function_word_without_context_uses_picker(self, monkeypatch):
+        """Sin contexto, un target funcional se corrige con el picker difflib."""
+        async def fake_ask(messages):
+            return json.dumps(
+                {
+                    "guessed": "Você já pensou em atrações diferentes?",
+                    "target_word": "em",
+                    "tip": "",
+                }
+            )
+
+        monkeypatch.setattr(ai, "ask_ollama", fake_ask)
+        result = run(ai.pronunciation_coach("Voce happen show em atracois diferentes?", "pt"))
+        assert result["target_word"] == "atrações"
+
+    def test_context_copy_detection_edges(self):
+        ctx = "É bom ter uma ideia de onde ir. Você já pensou em lugares com atrações diferentes?"
+        assert not ai._looks_like_context_copy("", "Voce happen show", ctx)
+        assert not ai._looks_like_context_copy("...", "Voce happen show", ctx)
+        assert ai._looks_like_context_copy(
+            "Você já pensou em lugares com atrações diferentes?", "Voce happen show em atracois diferentes?", ctx
+        )
+        assert ai._repair_from_context("...", "Você já pensou em lugares") is None
+        assert ai._repair_from_context("zqq wvv xxxq", "Você já pensou em lugares") is None

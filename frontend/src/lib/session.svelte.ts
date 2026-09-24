@@ -19,6 +19,11 @@ import { extractCompleted } from './speech'
 import { toast } from './toast.svelte'
 import type { Correction, PronunciationCoach, Turn } from './types'
 
+/** Espera entre dos intentos de sintetizar la misma frase (red/edge inestable). */
+const TTS_RETRY_DELAY_MS = 250
+/** Tope para esperar a que una frase termine de sonar (AudioContext suspendido). */
+const PLAYBACK_WAIT_MAX_MS = 15_000
+
 export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking'
 
 class SessionStore {
@@ -52,12 +57,8 @@ class SessionStore {
   private drainJob: Promise<void> | null = null
   /** Despierta al drenaje cuando la cola vacía recibe frases nuevas. */
   private queueWake: (() => void) | null = null
-  /** Escucha de interrupción activa mientras PracticeSpeak habla. */
-  private bargeOn = false
   /** El estudiante ya habló por encima de PracticeSpeak (interrumpió). */
   private bargeInFired = false
-  /** El blob de la interrupción está siendo transcrito/procesado. */
-  private bargeProcessing = false
   /** Generación del habla actual: la invalida un barge y cada respuesta nueva. */
   private speechGen = 0
 
@@ -318,7 +319,10 @@ class SessionStore {
     sendLog('COACH_START')
     let coach: PronunciationCoach = { guessed: badTranscript, target_word: '', tip: '' }
     try {
-      coach = await analyzePronunciation(badTranscript, settings.lang)
+      // Contexto: el último turno del tutor ancla la reparación al vocabulario
+      // de la pregunta que el estudiante está respondiendo.
+      const lastTutor = [...this.history].reverse().find((t) => t.role === 'assistant')
+      coach = await analyzePronunciation(badTranscript, settings.lang, lastTutor?.content ?? '')
     } catch {
       // Sin coach (p. ej. LLM ocupado): continúa la conversación normal.
     }
@@ -376,7 +380,10 @@ class SessionStore {
     const hit =
       said.includes(target) ||
       (target.length > 6 && said.split(/\s+/).some((w) => w.startsWith(target.slice(0, Math.ceil(target.length * 0.7)))))
-    const ok = hit && (confidence === null || confidence >= 0.55)
+    // Si el ASR ya leyó la palabra objetivo en lo dicho, la pronunciación fue
+    // inteligible: aceptamos sin mirar la confianza (el micrófono puede ser
+    // ruidoso y un intento perfecto no merece rechazarse por un 0.53 global).
+    const ok = hit
     sendLog(`COACH_ATTEMPT left=${this.coachAttemptsLeft} ok=${ok} said='${said.slice(0, 30)}'`)
     if (ok) {
       // ¡Logrado! Vuelve la conversación normal con lo que quiso decir.
@@ -499,7 +506,14 @@ class SessionStore {
     this.streamFinished = true
     const rest = reply.slice(this.spokenChars).trim()
     if (rest) this.enqueueSpeech(gen, [rest])
-    else this.kickDrain()
+    else {
+      // Respuesta ya consumida por el streaming: un drenaje aparcado esperando
+      // frases jamás volvería a despertar sin esto (kickDrain no hace nada si
+      // ya hay un drenaje vivo). Sin el toque, la sesión se quedaba en
+      // "speaking" y nunca volvía a escuchar.
+      this.queueWake?.()
+      this.kickDrain()
+    }
   }
 
   private enqueueSpeech(gen: number, chunks: string[]) {
@@ -516,97 +530,107 @@ class SessionStore {
     })
   }
 
+  /** Espera msec sin bloquear el event loop. */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms))
+  }
+
+  /**
+   * Sintetiza y reproduce un fragmento, devolviendo si llegó a sonar.
+   * Un solo fallo (red, rate-limit, salto) NO tumba la respuesta entera: se
+   * reintenta de inmediato y, si aún falla, se aparca en `deferred` para un
+   * último intento al final (todas las frases se leen, no solo las primeras).
+   */
+  private async speakChunk(chunk: string, gen: number, deferred: string[]): Promise<boolean> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (gen !== this.speechGen) return false
+      let data: ArrayBuffer | null = null
+      try {
+        data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang], settings.speed)
+      } catch {
+        data = null
+      }
+      if (gen !== this.speechGen) return false
+      if (!data) {
+        if (attempt === 0) await this.sleep(TTS_RETRY_DELAY_MS)
+        continue
+      }
+      try {
+        const h = await playBuffer(data, () => {})
+        if (gen !== this.speechGen) return false
+        if (!h || !h.current) continue
+        // Esperar a que la frase TERMINE de sonar (sin esto el bucle pasaba al
+        // siguiente chunk y stopPlayback() de la entrada cortaba la anterior),
+        // con tope de seguridad: si el AudioContext se suspende (pestaña en
+        // segundo plano) onended nunca llega y no queremos congelar el habla.
+        await Promise.race([h.waited, this.sleep(PLAYBACK_WAIT_MAX_MS)])
+        return gen === this.speechGen
+      } catch {
+        continue
+      }
+    }
+    deferred.push(chunk)
+    return false
+  }
+
   private async drain(standalone = false) {
     // La reproducción anterior se corta una sola vez al entrar (p. ej. al
     // interrumpir); dentro del bucle NUNCA se corta: playBuffer resuelve
     // cuando el audio EMPIEZA, no cuando termina.
     stopPlayback()
+    const deferred: string[] = []
+    let anySpoken = false
     while (this.running || standalone) {
       // Cola vacía con stream aún abierto: ESPERAR a que lleguen frases
       // (antes el bucle salía y el tramo final nunca se sintetizaba).
       while ((this.running || standalone) && !this.speechQueue.length && !this.streamFinished) {
         await new Promise<void>((wake) => (this.queueWake = wake)).finally(() => (this.queueWake = null))
       }
-      if (!(this.running || standalone) || (this.speechFailed && !this.speechQueue.length)) break
+      if (!(this.running || standalone)) break
       if (!this.speechQueue.length) break
-      if (!this.bargeOn && !this.bargeInFired) this.startBarge()
       const gen = this.speechGen
       const chunk = this.speechQueue.shift()!
       this.orb = 'speaking'
       this.speaking = true
       this.status = ''
-      let ok = false
-      try {
-        const data = await getTtsBuffer(chunk, settings.lang, settings.gender, settings.ttsVoice[settings.lang], settings.speed)
-        if (gen !== this.speechGen) break
-        if (data) {
-          // Esperar a que la frase TERMINE de sonar: sin esto el bucle seguía
-          // al siguiente chunk y el stopPlayback() de la entrada mataba la
-          // frase anterior (solo se oía la última de la cola).
-          const h = await playBuffer(data, () => {})
-          ok = h !== null && h.current
-          if (ok && h) await h.waited
-        }
-      } catch {
-        ok = false
-      }
+      const played = await this.speakChunk(chunk, gen, deferred)
       if (gen !== this.speechGen) break
-      if (!ok) {
-        this.speechFailed = true
-        break
+      if (played) anySpoken = true
+    }
+    // Último intento para las frases que fallaron: se leen tras el resto, que
+    // ya sonaron; todo menos dejar la respuesta a medias.
+    if ((this.running || standalone) && deferred.length) {
+      const gen = this.speechGen
+      for (const chunk of deferred) {
+        if (gen !== this.speechGen) break
+        if (await this.speakChunk(chunk, gen, [])) anySpoken = true
       }
     }
     if (this.streamFinished) {
       this.speechQueue = []
       this.speaking = false
       if (!this.running && !standalone) return
-      if (this.bargeInFired || this.bargeProcessing) return
-      this.stopBarge()
+      if (this.bargeInFired) return
       if (standalone) {
         // Habla del entrenador: la escucha siguiente la gestiona quien llamó.
         return
       }
-      if (this.speechFailed) {
-        this.speechFailed = false
-        sendLog('TTS_FALLO')
+      if (!anySpoken) {
+        sendLog(`TTS_FALLO pendientes=${deferred.length}`)
         this.orb = 'idle'
         this.setTranscriptOpen(true)
         this.status = 'Sin voz (¿internet?). Tu respuesta está arriba — toca el orbe para responder.'
         this.startListeningWithDelay()
-      } else if (this.coachActive) {
-        // Respuesta normal del tutor terminada con coach activo no ocurre;
-        // la escucha ya la lanza quien activó el coach. Nada que hacer.
-        this.orb = 'idle'
       } else {
+        if (deferred.length) sendLog(`TTS_PARCIAL faltaron=${deferred.length}`)
         this.orb = 'idle'
-        this.startListening()
+        if (this.coachActive) {
+          // La escucha del intento ya la lanza quien activó el coach.
+        } else {
+          this.startListening()
+        }
       }
     }
-  }
-
-  /** Empieza a escuchar en segundo plano para que el estudiante interrumpa. */
-  private startBarge() {
-    this.bargeOn = true
-    micRecorder
-      .begin(vadFor(settings.micSensitivity), {
-        onLevel: (level) => (this.energy = level),
-        onBarge: () => this.bargeIn(),
-      })
-      .then(async (blob) => {
-        this.bargeOn = false
-        if (!this.running) return
-        if (!this.bargeInFired) return
-        this.bargeInFired = false
-        this.bargeProcessing = true
-        try {
-          await this.processVoiceBlob(blob)
-        } finally {
-          this.bargeProcessing = false
-        }
-      })
-      .catch(() => {
-        this.bargeOn = false
-      })
   }
 
   /** Interrupción: corta a PracticeSpeak y pasa a escucharte a ti. */
@@ -625,22 +649,13 @@ class SessionStore {
     this.queueWake?.()
   }
 
-  /** Cancela la escucha de fondo ya no necesaria (solo si no hubo interrupción). */
-  private stopBarge() {
-    this.bargeOn = false
-    this.bargeInFired = false
-    micRecorder.cancel()
-  }
-
   private clearSpeech() {
     this.speechQueue = []
     this.spokenChars = 0
     this.streamFinished = false
     this.speechFailed = false
     this.speaking = false
-    this.bargeOn = false
     this.bargeInFired = false
-    this.bargeProcessing = false
     this.speechGen = 0
     // Si el drenaje está aparcado esperando frases, despertarlo para que
     // vea el reset y termine limpio (sin esto bloquearía el habla futura).

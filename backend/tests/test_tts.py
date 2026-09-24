@@ -31,6 +31,14 @@ class FakeCommunicate:
         yield {"type": "audio", "data": b"bb"}
 
 
+class FakeHangingCommunicate(FakeCommunicate):
+    """edge-tts que se cuelga: nunca cierra el stream."""
+
+    async def stream(self):
+        yield {"type": "audio", "data": b"aa"}
+        await asyncio.Event().wait()
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -140,6 +148,14 @@ class TestSintetizar:
         monkeypatch.setattr(tts.edge_tts, "Communicate", FakeCommunicate)
         run(sintetizar("hola", "en", "female", "some-other-id"))
         assert FakeCommunicate.last_args == ("hola", "some-other-id")
+
+    def test_edge_timeout_aborts_a_hung_synthesis(self, monkeypatch):
+        """Una llamada edge colgada no puede congelar el habla: el wait_for la corta."""
+        monkeypatch.setattr(tts.edge_tts, "Communicate", FakeHangingCommunicate)
+        monkeypatch.setattr(tts, "EDGE_TTS_TIMEOUT", 0.05)
+        with pytest.raises(RuntimeError) as exc:
+            run(sintetizar("hola", "en"))
+        assert "tiempo de espera" in str(exc.value)
 
 
 class TestPiperVoice:

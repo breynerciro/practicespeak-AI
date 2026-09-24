@@ -1,6 +1,8 @@
+import difflib
 import json
 import random
 import re
+import unicodedata
 
 import httpx
 
@@ -480,27 +482,163 @@ async def check_ollama() -> bool:
 
 PRONUNCIATION_SYSTEM = """You are a pronunciation coach for __LANG__ learners whose mother tongue is Spanish.
 Given a voice transcription that likely contains misheard words, guess what the student MEANT to say.
+You get the tutor's last message as CONTEXT: the student is answering that, so use its vocabulary to repair the transcript.
 
 Rules:
 - Reply ONLY with valid JSON, no extra text:
   {"guessed": "what the student most likely intended to say in __LANG__", "target_word": "the ONE word or short phrase whose pronunciation was off (in __LANG__)", "tip": "ONE short pronunciation tip in Spanish (max 12 words) about how to place mouth/tongue for that word"}
-- "guessed" must be a faithful minimal repair of the transcript: keep everything the student said right, fix only what sounds like a mispronounced word. If the transcript is actually fine, guessed equals transcript and target_word is empty.
+- "guessed" must be a faithful minimal repair of the transcript: keep everything the student said right, fix only what sounds like a mispronounced word, preferring words that fit the CONTEXT. If the transcript is actually fine, guessed equals transcript and target_word is empty.
+- "target_word" must be a CONTENT word (noun, verb, adjective) that was mispronounced — NEVER a short function word like "em", "the", "a", "que". Pick the one whose sounds differ most between Spanish and __LANG__.
 - If the transcription is unintelligible, make your best phonetic guess anyway.
 - Never lecture. The tip must be practical and phonetic (e.g. "la 'th' va entre los dientes, como una 'z' suave española").
 """
 
 
-async def pronunciation_coach(transcript: str, language: str) -> dict:
+_FUNC_WORDS = frozenset(
+    """
+    de do da dos das em no na nos nas um uma uns o a os as que com por para pra pra e ou se ao
+    à às the an of to in on at is are was were be been am and or but if then than so as it he
+    she we they you i me my your his her its our their this that these those there here what
+    which who how why when where not yes does did done have has had will would can could should
+    may might must shall get got go went le la les un une des el los las y en con del al su sus
+    mi tu es son está muy ya muito poco bien well just also too very más
+    """.split()
+)
+
+
+def _norm_word(w: str) -> str:
+    """Minúsculas sin tildes, para comparar palabras entre sí."""
+    nfd = unicodedata.normalize("NFD", w.lower().strip(".,!?¿¡;:'\""))
+    return "".join(c for c in nfd if not unicodedata.combining(c))
+
+
+def _is_function_word(w: str) -> bool:
+    return len(w) <= 3 or _norm_word(w) in _FUNC_WORDS
+
+
+def _pick_target_word(guessed: str, transcript: str) -> str:
+    """Elige la palabra de `guessed` que el estudiante intentó decir y destrozó.
+
+    Criterio: palabra de contenido de la frase reparada que NO está (bien dicha)
+    en la transcripción pero sí tiene una versión garabateada parecida (ratio
+    difflib >= 0.45). Preferimos la coincidencia más clara; desempate por largo
+    (las palabras largas son las que valen la pena practicar)."""
+    t_words = [_norm_word(t) for t in re.findall(r"[^\W\d_]+", transcript, re.UNICODE)]
+    best, best_key = "", (-1.0, 0)
+    for w in re.findall(r"[^\W\d_]+", guessed, re.UNICODE):
+        lw = _norm_word(w)
+        if _is_function_word(lw) or lw in t_words:
+            continue
+        ratio = max(
+            (difflib.SequenceMatcher(None, lw, t).ratio() for t in t_words), default=0.0
+        )
+        if ratio < 0.45:
+            continue
+        key = (ratio, len(w))
+        if key > best_key:
+            best, best_key = w, key
+    return best
+
+
+def _repair_from_context(transcript: str, context: str) -> tuple[str, str] | None:
+    """Reparación mínima determinista: alinea la transcripción con el contexto.
+
+    Compara las palabras (normalizadas, sin tildes) de la transcripción con las
+    del último mensaje del tutor usando difflib por bloques (opcodes), de modo
+    que el orden importe: cada palabra de contenido "casi igual" (0.45 ≤ ratio
+    < 1.0) a una del contexto en su misma posición se sustituye por esta — es
+    lo que el estudiante intentó pronunciar. Devuelve (frase_reparada,
+    ultima_palabra_sustituida) o None si no hay nada que reparar. Nunca inventa
+    vocabulario: solo usa palabras que ya dijo el tutor."""
+    if not context.strip():
+        return None
+    t_tokens = re.findall(r"[^\W\d_]+|[^\w]+", transcript, re.UNICODE)
+    t_words = [t for t in t_tokens if re.match(r"[^\W\d_]+$", t)]
+    t_norm = [_norm_word(w) for w in t_words]
+    c_words = re.findall(r"[^\W\d_]+", context, re.UNICODE)
+    c_norm = [_norm_word(w) for w in c_words]
+    if not t_norm or not c_norm:
+        return None
+
+    fixes: dict[int, str] = {}
+    assigned: list[tuple[int, int]] = []
+    sm = difflib.SequenceMatcher(None, t_norm, c_norm, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag != "replace":
+            continue
+        # Dentro de cada bloque de sustitución buscamos las mejores parejas
+        # fonéticas (los bloques pueden tener tamaños distintos entre ambas
+        # frases, por lo que la posición absoluta no basta).
+        pairs: list[tuple[float, int, int]] = []
+        for i in range(i1, i2):
+            lw = t_norm[i]
+            if _is_function_word(lw) or len(lw) < 4:
+                continue
+            for j in range(j1, j2):
+                cw = c_norm[j]
+                if cw == lw or _is_function_word(cw):
+                    continue
+                ratio = difflib.SequenceMatcher(None, lw, cw).ratio()
+                if 0.45 <= ratio < 1.0:
+                    pairs.append((ratio, i, j))
+        used_i, used_j = set(), set()
+        for _, i, j in sorted(pairs, reverse=True):
+            if i in used_i or j in used_j:
+                continue
+            used_i.add(i)
+            used_j.add(j)
+            assigned.append((i, j))
+    if not assigned:
+        return None
+    for i, j in sorted(assigned):
+        fixes[i] = c_words[j]
+        last_fix = c_words[j]
+    out: list[str] = []
+    wi = 0
+    for tok in t_tokens:
+        if re.match(r"[^\W\d_]+$", tok):
+            out.append(fixes.get(wi, tok))
+            wi += 1
+        else:
+            out.append(tok)
+    return "".join(out), last_fix
+
+
+def _looks_like_context_copy(guessed: str, transcript: str, context: str) -> bool:
+    """True si el LLM devolvió (en todo o en parte) el contexto en vez de reparar."""
+    if not context.strip() or not guessed.strip():
+        return False
+    g_words = re.findall(r"[^\W\d_]+", guessed, re.UNICODE)
+    if not g_words:
+        return False
+    ctx_norm = {_norm_word(w) for w in re.findall(r"[^\W\d_]+", context, re.UNICODE)}
+    in_ctx = sum(1 for w in g_words if _norm_word(w) in ctx_norm)
+    mostly_ctx = in_ctx / len(g_words) >= 0.8
+    far_from_t = (
+        difflib.SequenceMatcher(
+            None, _norm_word(guessed), _norm_word(transcript)
+        ).ratio()
+        < 0.8
+    )
+    return mostly_ctx and far_from_t
+
+
+async def pronunciation_coach(transcript: str, language: str, context: str = "") -> dict:
     """Adivina qué quiso decir el estudiante y da un tip fonético de la palabra.
 
     Usado por el entrenador de pronunciación: cuando Whisper no entiende, el
     LLM repara la frase y el frontend puede pedirle que repita la palabra
-    clave hasta 2 veces antes de continuar la conversación."""
+    clave hasta 2 veces antes de continuar la conversación. `context` es el
+    último mensaje del tutor: ancla la reparación al vocabulario esperado."""
     lang = _lang_name(language)
     system = PRONUNCIATION_SYSTEM.replace("__LANG__", lang)
+    user_content = ""
+    if context.strip():
+        user_content += f"CONTEXT (the tutor just said this): {context.strip()}\n\n"
+    user_content += f"TRANSCRIPT to repair: {transcript}"
     messages = [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"Voice transcription: {transcript}"},
+        {"role": "user", "content": user_content},
     ]
     try:
         raw = await ask_ollama(messages)
@@ -509,8 +647,35 @@ async def pronunciation_coach(transcript: str, language: str) -> dict:
         log_info(f"PRON_COACH_ERR {exc}")
         data = {}
     guessed = str(data.get("guessed", "")).strip() or transcript
+    if _looks_like_context_copy(guessed, transcript, context):
+        log_info("PRON_COACH_CTX_COPY: el LLM devolvió el contexto; rescate determinista")
+        data = {}
+        guessed = transcript
     target = str(data.get("target_word", "")).strip()
     tip = str(data.get("tip", "")).strip()
+
+    # Evidencia fonética determinista primero: alinear la transcripción con el
+    # contexto del tutor (los modelos pequeños se dejan llevar por la semántica).
+    aligned = _repair_from_context(transcript, context) if context.strip() else None
+    if aligned:
+        a_guessed, a_target = aligned
+        if (
+            target
+            and _norm_word(target) != _norm_word(a_target)
+            and _norm_word(a_target) not in _norm_word(tip)
+        ):
+            tip = ""  # el tip era para la palabra del LLM: mejor sin tip que uno equivocado
+        if target and _norm_word(target) != _norm_word(a_target):
+            log_info(f"PRON_TARGET_ALIGN '{target}' -> '{a_target}'")
+        guessed, target = a_guessed, a_target
+
+    n_target = _norm_word(target)
+    guessed_words = {_norm_word(w) for w in re.findall(r"[^\W\d_]+", guessed, re.UNICODE)}
+    if not target or _is_function_word(n_target) or n_target not in guessed_words:
+        fallback = _pick_target_word(guessed, transcript)
+        if fallback:
+            log_info(f"PRON_TARGET_FIX '{target}' -> '{fallback}'")
+            target = fallback
     return {"guessed": guessed, "target_word": target, "tip": tip}
 
 

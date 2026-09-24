@@ -58,6 +58,10 @@ PIPER_EXTRA = {
 
 PIPER_VOICES_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 
+# Tope para una síntesis de edge-tts (nube): una llamada colgada debe fallar
+# rápido (502) y no congelar el habla del tutor.
+EDGE_TTS_TIMEOUT = 20.0
+
 # Índice de todas las voces piper conocidas (para reconocer un id en /api/tts).
 _PIPER_IDS = frozenset(
     vid
@@ -221,10 +225,17 @@ def _rate_for_speed(speed: float) -> str | None:
 
 async def _sintetizar_edge(texto: str, voice: str, rate: str | None = None) -> bytes:
     communicate = edge_tts.Communicate(texto, voice, rate=rate) if rate else edge_tts.Communicate(texto, voice)
-    chunks = []
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            chunks.append(chunk["data"])
+    chunks: list[bytes] = []
+
+    async def _collect() -> None:
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                chunks.append(chunk["data"])
+
+    try:
+        await asyncio.wait_for(_collect(), timeout=EDGE_TTS_TIMEOUT)
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError("edge-tts agotó el tiempo de espera") from exc
     return b"".join(chunks)
 
 

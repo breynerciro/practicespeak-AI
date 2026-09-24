@@ -374,7 +374,8 @@ async def pronunciation_analyze(payload: dict, request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="Falta el transcript.")
     language = str(payload.get("language", "en"))
-    result = await pronunciation_coach(transcript, language)
+    context = str(payload.get("context", ""))
+    result = await pronunciation_coach(transcript, language, context)
     log_info(f"PRON_ANALYZE '{transcript[:40]}' -> '{result['guessed'][:40]}' target={result['target_word']!r}")
     return JSONResponse(result)
 

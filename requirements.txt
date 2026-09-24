@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 httpx
 edge-tts
+piper-tts
 faster-whisper
 numpy
 pillow

@@ -139,11 +139,15 @@ export async function transcribeAudio(blob: Blob, language: string): Promise<str
 }
 
 /** Entrenador: adivina qué quiso decir el estudiante y da un tip de la palabra. */
-export function analyzePronunciation(transcript: string, language: string): Promise<PronunciationCoach> {
+export function analyzePronunciation(
+  transcript: string,
+  language: string,
+  context = '',
+): Promise<PronunciationCoach> {
   return fetch('/api/pronunciation/analyze', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers() },
-    body: JSON.stringify({ transcript, language }),
+    body: JSON.stringify({ transcript, language, context }),
   }).then(jsonOrThrow)
 }
 
@@ -161,9 +165,20 @@ export async function getTtsBuffer(
   })
   if (voice) params.set('voice', voice)
   if (speed !== 1) params.set('speed', String(speed))
-  const resp = await fetch(`/api/tts?${params.toString()}`, { headers: headers() })
-  if (!resp.ok) return null
-  return resp.arrayBuffer()
+  // Una síntesis colgada (p. ej. edge en una red estable) no debe congelar la
+  // cola de habla: al superar el tope se aborta y se devuelve null, y el
+  // orquestador reintenta o sigue con la siguiente frase.
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 20_000)
+  try {
+    const resp = await fetch(`/api/tts?${params.toString()}`, { headers: headers(), signal: ctrl.signal })
+    if (!resp.ok) return null
+    return resp.arrayBuffer()
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export function listTtsVoices(lang: string): Promise<TtsVoice[]> {
